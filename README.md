@@ -262,6 +262,7 @@ gpu-lab reproduce RUN_ID                        # linked fresh run of every orig
 - A detached supervisor owns the run, not the browser or HTTP request.
 - One subprocess per test contains most driver crashes/OOMs and releases allocations on exit.
 - SQLite WAL is the authoritative journal. Each completed test is committed and has a JSON snapshot. Telemetry is committed as it arrives.
+- The live report and `gpu-lab wait` show current-test and whole-run elapsed time.
 - Workers update a heartbeat and identify their PID using boot ID/start time. Dead workers are marked interrupted when the UI/CLI inspects history.
 - Cancellation terminates the benchmark process group, including FFmpeg children. A benchmark also monitors its supervisor to clean up after supervisor loss. A GPU driver hang may require administrator recovery; software cannot guarantee recovery from a hung kernel.
 - An interrupted **active test** may lose its uncommitted cases; earlier completed test groups survive. Continuation creates a new linked run, rather than merging separate thermal conditions into one record.

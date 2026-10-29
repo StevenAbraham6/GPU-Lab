@@ -149,22 +149,26 @@ def work(store,rid):
         if global_blocks:
             store.update(rid,status="blocked",error="; ".join(c["detail"] for c in global_blocks));return
         blocked={t for c in report["checks"] if c["state"]=="blocked" for t in c["tests"]}
-        store.update(rid,status="running")
+        store.update(rid,status="running",started_at=now())
         if not run["simulated"]:
             collector=Collector(store,rid,gpu,cfg);collector.start()
         for test in run["tests"]:
-            store.update(rid,current_test=test)
+            store.update(rid,current_test=test,current_test_started_at=now())
             if store.get(rid,samples=False)["cancel"]:
-                store.update(rid,status="cancelled");return
+                store.update(rid,status="cancelled",current_test_started_at=None);return
             if test in blocked:
                 reasons=[c["detail"] for c in report["checks"] if test in c["tests"] and c["state"]=="blocked"]
-                store.result(rid,dict(test_id=test,status="missing_dependency",reason="; ".join(reasons),cases=[]));continue
+                store.result(rid,dict(test_id=test,status="missing_dependency",reason="; ".join(reasons),cases=[]))
+                store.update(rid,current_test_started_at=None)
+                continue
             if run["simulated"]:
                 for watt in (82,108,99):
                     store.sample(rid,test,time.time(),dict(power_w=watt,temperature_c=60,clock_mhz=1500,memory_used_mib=1024,
                                  utilization_pct=95,power_scope='SIMULATED',source='synthetic demonstration fixture'))
                     time.sleep(.07)
-                store.result(rid,demo_result(test,cfg));continue
+                store.result(rid,demo_result(test,cfg))
+                store.update(rid,current_test_started_at=None)
+                continue
             collector.test_id=test;collector.take()
             folder=store.directory(rid);spec=folder/(test+"-spec.json");out=folder/(test+"-raw.json")
             atomic_json(spec,dict(test_id=test,gpu=gpu,config=cfg,directory=str(folder/"video")))
@@ -183,17 +187,18 @@ def work(store,rid):
             collector.take()
             if aborted:
                 store.result(rid,dict(test_id=test,status="cancelled" if aborted=="cancelled" else "error",reason=aborted,cases=[]))
-                store.update(rid,status="cancelled" if aborted=="cancelled" else "error",error=aborted);return
+                store.update(rid,status="cancelled" if aborted=="cancelled" else "error",error=aborted,current_test_started_at=None);return
             if child.returncode!=0 or not out.exists():
                 result=dict(test_id=test,status="error",reason=f"Benchmark process exited {child.returncode}; inspect {test}.log",cases=[])
             else:
                 result=json.loads(out.read_text());result=efficiency(store,rid,result,cfg)
             store.result(rid,result)
+            store.update(rid,current_test_started_at=None)
             child=None
         results=store.get(rid,samples=False)["results"]
         states={r["status"] for r in results}
         final="completed" if states=={"passed"} else "failed_validation" if "failed_validation" in states else "partial" if "passed" in states or "partial" in states else "error"
-        store.update(rid,status=final,current_test=None)
+        store.update(rid,status=final,current_test=None,current_test_started_at=None)
     except BaseException as e:
         if child and child.poll() is None:terminate(child)
         store.update(rid,status="error",error=str(e))

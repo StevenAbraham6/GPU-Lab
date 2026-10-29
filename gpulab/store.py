@@ -31,7 +31,8 @@ class Store:
               config TEXT NOT NULL, tests TEXT NOT NULL, gpu TEXT NOT NULL,
               simulated INTEGER NOT NULL DEFAULT 0, parent TEXT, revision INTEGER NOT NULL DEFAULT 1,
               cancel INTEGER NOT NULL DEFAULT 0, pid INTEGER, marker TEXT, heartbeat TEXT,
-              current_test TEXT, error TEXT, source TEXT NOT NULL DEFAULT 'local');
+              current_test TEXT, error TEXT, source TEXT NOT NULL DEFAULT 'local',
+              started_at TEXT, current_test_started_at TEXT);
             CREATE TABLE IF NOT EXISTS results (
               seq INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL,
               test_id TEXT NOT NULL, data TEXT NOT NULL);
@@ -44,6 +45,11 @@ class Store:
             CREATE INDEX IF NOT EXISTS telemetry_run ON telemetry(run_id, ts);
             CREATE INDEX IF NOT EXISTS results_run ON results(run_id);
             """)
+            columns = {row[1] for row in db.execute("PRAGMA table_info(runs)")}
+            if "started_at" not in columns:
+                db.execute("ALTER TABLE runs ADD COLUMN started_at TEXT")
+            if "current_test_started_at" not in columns:
+                db.execute("ALTER TABLE runs ADD COLUMN current_test_started_at TEXT")
 
     def connect(self):
         db = sqlite3.connect(self.root / "lab.sqlite3", timeout=30)
@@ -95,7 +101,7 @@ class Store:
         return [{**dict(r), "metadata": json.loads(r["metadata"]), "gpu": json.loads(r["gpu"]), "simulated": bool(r["simulated"])} for r in rows]
 
     def update(self, rid, **values):
-        allowed = {"status", "pid", "marker", "heartbeat", "current_test", "error", "cancel"}
+        allowed = {"status", "pid", "marker", "heartbeat", "current_test", "error", "cancel", "started_at", "current_test_started_at"}
         if values.keys() - allowed:
             raise ValueError("Invalid update")
         values["updated"] = now()

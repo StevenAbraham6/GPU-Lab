@@ -9,6 +9,7 @@ from .devices import discover,select_gpu
 from .preflight import check
 from .runner import DEMO_GPU,cancel,continuation,create_run
 from .store import ACTIVE,Store
+from .timing import format_duration,run_timing
 
 def output(value):print(json.dumps(value,indent=2,ensure_ascii=False,allow_nan=False))
 
@@ -38,13 +39,19 @@ def parser():
     return p
 
 def wait(store,rid):
-    previous=None
+    width=0
     try:
         while True:
             store.recover();run=store.get(rid,samples=False)
-            state=(run["status"],run["current_test"],len(run["results"]))
-            if state!=previous:print(f"{run['status']:18} {run['current_test'] or '-':14} {len(run['results'])}/{len(run['tests'])} tests",flush=True);previous=state
+            timing=run_timing(run)
+            current_elapsed=format_duration(timing["current_elapsed_seconds"]) if run["current_test"] else "-"
+            run_elapsed=format_duration(timing["run_elapsed_seconds"])
+            line=(f"{run['status']} | {run['current_test'] or '-'} | "
+                  f"{len(run['results'])}/{len(run['tests'])} groups | "
+                  f"current elapsed {current_elapsed} | total elapsed {run_elapsed}")
+            print("\r"+line.ljust(width),end="",flush=True);width=max(width,len(line))
             if run["status"] not in ACTIVE:
+                print(flush=True)
                 if run.get("error"):print(run["error"],file=sys.stderr)
                 return 0 if run["status"]=="completed" else 2
             time.sleep(1)
