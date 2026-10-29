@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#132e39"><title>GPU Lab — Performance & efficiency</title>
+  <link rel="icon" href="/favicon.svg"><link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <a class="brand" href="#overview"><span class="brand-mark">G<span>↗</span></span><span>GPU Lab<small>PERFORMANCE / POWER</small></span></a>
+    <div class="workspace-label">WORKSPACE</div>
+    <nav aria-label="Main navigation">
+      <a href="#overview" data-nav="overview"><span class="nav-icon">◫</span> Overview</a>
+      <a href="#new" data-nav="new"><span class="nav-icon">＋</span> New benchmark</a>
+      <a href="#runs" data-nav="runs"><span class="nav-icon">▤</span> Run library <span id="run-count" class="count">0</span></a>
+      <a href="#compare" data-nav="compare"><span class="nav-icon">⇄</span> Compare runs</a>
+    </nav>
+    <div class="sidebar-bottom"><span class="status-dot"></span> LOCAL BENCHMARK WORKSPACE<p>Measured work.<br>Clear comparisons.</p><small>GPU telemetry · No overall score</small></div>
+  </aside>
+  <div class="main-shell">
+    <header class="topbar"><div><span class="eyebrow">BENCHMARK WORKSPACE</span><span id="host-label" class="host-label">Discovering hardware…</span></div><span class="version">v0.1.0 <span class="pill neutral">LINUX FIRST</span></span></header>
+    <main id="app" tabindex="-1"><div class="loading">Loading your workspace…</div></main>
+    <footer class="app-footer">GPU Lab <span>Performance, energy & reliability — with the method attached.</span></footer>
+  </div>
+  <dialog id="modal"><div id="modal-content"></div></dialog>
+  <div id="toast" role="status" aria-live="polite"></div>
+</body></html>

@@ -1,0 +1,7 @@
+{
+  "codecs": ["h264", "hevc", "av1"],
+  "resolutions": ["1920x1080", "3840x2160"],
+  "video_modes": ["quality", "low-latency"],
+  "video_seconds": 10,
+  "repeats": 3
+}

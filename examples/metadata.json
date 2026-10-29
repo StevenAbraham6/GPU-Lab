@@ -1,0 +1,6 @@
+{
+  "name": "L4 - baseline - default power",
+  "description": "Baseline before comparing the Radeon cards.",
+  "tags": ["baseline", "default-power"],
+  "notes": "Same server configuration and workload settings for all comparisons."
+}
