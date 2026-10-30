@@ -180,6 +180,20 @@ class UpdateTests(unittest.TestCase):
             worker.verify(self.latest)
         self.assertEqual(request.call_count, 3)
 
+    def test_network_listener_maintenance_health_check_uses_loopback(self):
+        server = LabServer(("0.0.0.0", 0), self.store, token="secret")
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            worker = self.worker("restart")
+            worker.job["health_url"] = server.updates.health_url
+            worker.verify(self.initial)
+            self.assertTrue(server.updates.health_url.startswith("http://127.0.0.1:"))
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
+
     def test_up_to_date_update_does_not_stop_service(self):
         self.config["installed_commit"] = self.latest
         write_json(self.config_path, self.config)
@@ -307,6 +321,34 @@ exec ''' + shlex.quote(sys.executable) + ''' "$@"
         self.assertIn("GPU_LAB_DEPLOYMENT=", (binaries / "gpu-lab").read_text())
         self.assertIn(' -I -m gpulab', (binaries / "gpu-lab").read_text())
         self.assertNotIn("torch", log.read_text())
+
+        # Exercise the real systemd unit and drop-in generation with a fake manager.
+        fake_bin = self.root / "fake-bin"
+        fake_bin.mkdir()
+        systemctl = fake_bin / "systemctl"
+        systemctl.write_text("#!/bin/sh\nexit 0\n")
+        systemctl.chmod(0o755)
+        home = self.root / "home"
+        home.mkdir()
+        env = {**os.environ, "HOME": str(home), "PATH": str(fake_bin) + os.pathsep + os.environ["PATH"],
+               "GPU_LAB_PREFIX": str(prefix), "GPU_LAB_HOME": str(self.store.root), "GPU_LAB_BIN": str(binaries),
+               "GPU_LAB_PYTHON": str(interpreter), "GPU_LAB_TEST_LOG": str(log)}
+        args = ["bash", str(self.source / "install.sh"), "--app-only", "--update-app"]
+        result = subprocess.run(args + ["--network-service"], capture_output=True, text=True, timeout=30, env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        token = prefix / "network-token"
+        original = token.read_text()
+        self.assertGreaterEqual(len(original.strip()), 32)
+        self.assertEqual(token.stat().st_mode & 0o777, 0o600)
+        override = home / ".config/systemd/user/gpu-lab.service.d/network.conf"
+        config = override.read_text()
+        self.assertIn("--host 0.0.0.0 --port 8080 --token-file", config)
+        self.assertIn(str(token), config)
+        for option in ("--service", "--network-service"):
+            result = subprocess.run(args + [option], capture_output=True, text=True, timeout=30, env=env)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(override.read_text(), config)
+            self.assertEqual(token.read_text(), original)
 
 
 if __name__ == "__main__":

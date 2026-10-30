@@ -12,12 +12,14 @@ video_build=1
 app_only=0
 system_packages=1
 update_app=0
+network_service=0
 usage() {
   cat <<'EOF'
 GPU Lab installer
   bash install.sh [--backend auto|nvidia|amd|both|none] [--service]
                   [--app-only] [--update-app] [--skip-video-build] [--no-system-packages]
   --service             Start the UI as a persistent user systemd service.
+  --network-service     Configure the service for authenticated network access (implies --service).
   --app-only            UI/reports only; no GPU runtimes or video compilation.
   --update-app          Update only the app and browser-update setup; keep GPU runtimes/tools.
   --skip-video-build    Use distribution FFmpeg (VMAF may be unavailable).
@@ -31,6 +33,7 @@ while (($#)); do
   case "$1" in
     --backend) backend="${2:?Missing backend}"; shift 2;;
     --service) service=1; shift;;
+    --network-service) service=1; network_service=1; shift;;
     --app-only) app_only=1; backend=none; video_build=0; shift;;
     --skip-video-build) video_build=0; shift;;
     --no-system-packages) system_packages=0; shift;;
@@ -152,6 +155,26 @@ import sys
 exe=sys.argv[2].replace('\\','\\\\').replace('"','\\"').replace('%','%%')
 Path(sys.argv[1]).write_text('[Unit]\nDescription=GPU Lab web workspace\nAfter=network.target\n\n[Service]\nType=simple\nExecStart="'+exe+'" serve --host 127.0.0.1 --port 8080\nRestart=on-failure\nRestartSec=3\nKillMode=process\n\n[Install]\nWantedBy=default.target\n')
 PY
+  if [[ "$network_service" == 1 ]]; then
+    mkdir -p "$HOME/.config/systemd/user/gpu-lab.service.d"
+    "$py" - "$GPU_LAB_PREFIX/network-token" "$HOME/.config/systemd/user/gpu-lab.service.d/network.conf" "$GPU_LAB_BIN/gpu-lab" <<'PY'
+import os, pathlib, secrets, sys
+token, override, exe = map(lambda value: pathlib.Path(value).expanduser().absolute(), sys.argv[1:])
+try:
+    fd = os.open(token, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+except FileExistsError:
+    if not token.is_file() or not token.read_text().strip():
+        raise SystemExit('Existing network token is empty or not a regular file; resolve it before proceeding.')
+    token.chmod(0o600)
+else:
+    with os.fdopen(fd, 'w') as out:
+        out.write(secrets.token_urlsafe(32) + '\n')
+def quote(value):
+    return '"' + str(value).replace('\\', '\\\\').replace('"', '\\"').replace('%', '%%') + '"'
+override.write_text('[Service]\nExecStart=\nExecStart=' + quote(exe) + ' serve --host 0.0.0.0 --port 8080 --token-file ' + quote(token) + '\n')
+PY
+    printf 'Network access enabled on port 8080. Token file: %s/network-token\n' "$GPU_LAB_PREFIX"
+  fi
   systemctl --user daemon-reload
   systemctl --user enable --now gpu-lab
   systemctl --user restart gpu-lab

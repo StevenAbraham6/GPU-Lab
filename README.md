@@ -105,6 +105,20 @@ systemctl --user restart gpu-lab
 
 The unit uses `KillMode=process`: restarting the UI does not intentionally kill detached benchmark workers. A reboot cannot preserve an in-flight GPU operation; the run will be marked interrupted and completed test records remain available.
 
+#### Direct network access
+
+On the server, from a checkout containing this version, enable the authenticated network listener:
+
+```bash
+bash install.sh --update-app --network-service
+```
+
+Run this as the Linux user that owns GPU Lab, using the same `GPU_LAB_PREFIX`, `GPU_LAB_HOME`, and `GPU_LAB_BIN` overrides as the original installation. The installer creates a random access token in `~/.local/share/gpu-lab-app/network-token` (or `$GPU_LAB_PREFIX/network-token`), readable by its owner, and retains an existing token on subsequent runs. Read the file on the server and enter its contents at the browser login. Treat the token as a password.
+
+The service listens on all IPv4 interfaces on port 8080. From an authorized network, visit `http://SERVER_IP:8080`. Allow the port through the server firewall and any upstream firewall only for trusted VPN clients or other explicitly authorized addresses; VPN routing, public IP forwarding, and firewall rules depend on the environment and are not configured by the installer. Plain HTTP does not encrypt the token or results: use a VPN protecting the full path, or an HTTPS reverse proxy for access over untrusted networks. This single-operator service is not designed for unrestricted public exposure.
+
+The network setting is a systemd drop-in that remains in place when the installer rewrites the base service, and browser updates leave it intact. Maintenance verifies the restarted service through loopback, which remains reachable when listening on `0.0.0.0`. To return to loopback-only access, remove `~/.config/systemd/user/gpu-lab.service.d/network.conf`, then run `systemctl --user daemon-reload` and `systemctl --user restart gpu-lab`.
+
 ### Browser updates and restarts
 
 Open **Settings** for **Check for updates**, **Update to latest**, **Restart service**, and the latest maintenance log. New service installations include this setup. For an existing installation, deploy this source revision to the server and run once from its Git checkout:
