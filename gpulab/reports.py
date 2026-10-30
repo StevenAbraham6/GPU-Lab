@@ -14,6 +14,12 @@ def fmt(v):
         return f"{v:,.3g}" if abs(v)<.01 and v else f"{v:,.2f}".rstrip("0").rstrip(".")
     return str(v)
 
+def display_metric(value, unit):
+    """Scale high-level FP32 throughput for human-facing reports."""
+    if unit == 'GFLOP/s':
+        return value / 1000, 'TFLOP/s'
+    return value, unit
+
 def direction(value):
     return {"higher":"Higher is better","lower":"Lower is better","context":"Context - interpret with workload"}.get(value,"Context")
 
@@ -36,7 +42,8 @@ def report_csv(run):
     out=io.StringIO();writer=csv.writer(out)
     writer.writerow(["run_id","run_name","simulated","gpu","test","case","metric","value","unit","direction","settings","power_scope"])
     for row in flatten(run):
-        cells=[run["id"],run["metadata"]["name"],run["simulated"],run["gpu"]["name"],row["test_id"],row["case"],row["name"],row["value"],row["unit"],direction(row["direction"]),json.dumps(row["settings"],sort_keys=True),row["power_scope"]]
+        value, unit = display_metric(row["value"], row["unit"])
+        cells=[run["id"],run["metadata"]["name"],run["simulated"],run["gpu"]["name"],row["test_id"],row["case"],row["name"],value,unit,direction(row["direction"]),json.dumps(row["settings"],sort_keys=True),row["power_scope"]]
         writer.writerow(["'"+v if isinstance(v,str) and v.lstrip().startswith(('=','+','-','@')) else v for v in cells])
     return out.getvalue().encode()
 
@@ -53,7 +60,9 @@ def report_html(run):
             parts.append(f"<h3>{e(case['name'])} <small>{e(case['status'])}</small></h3>")
             if case.get("reason"):parts.append(f"<p>{e(case['reason'])}</p>")
             parts.append("<table><thead><tr><th>Metric</th><th>Result</th><th>Interpretation</th></tr></thead><tbody>")
-            for m in case.get("metrics",[]):parts.append(f"<tr><td>{e(m['name'])}</td><td><b>{e(fmt(m['value']))}</b> {e(m['unit'])}</td><td>{e(direction(m['direction']))}</td></tr>")
+            for m in case.get("metrics",[]):
+                value, unit = display_metric(m['value'], m['unit'])
+                parts.append(f"<tr><td>{e(m['name'])}</td><td><b>{e(fmt(value))}</b> {e(unit)}</td><td>{e(direction(m['direction']))}</td></tr>")
             parts.append("</tbody></table>")
             if case.get("power",{}).get("reason"):parts.append(f"<p class='muted'>Efficiency: {e(case['power']['reason'])}</p>")
             parts.append(f"<details><summary>How this case was performed</summary><p>{e(case.get('note',''))} {e(case.get('quality_note',''))}</p><pre>{e(json.dumps(case.get('settings',{}),indent=2))}</pre></details>")
@@ -105,7 +114,12 @@ def report_pdf(run):
     for result in run["results"]:
         case=representative(result);m=case['metrics'][0] if case else None
         label=BY_ID.get(result["test_id"],{}).get("title",result["test_id"])+((' / '+case['name']) if case else '')
-        coverage.append([label,(fmt(m['value'])+' '+m['unit']+' / '+direction(m['direction'])) if m else 'No valid measurement',result['status']])
+        if m:
+            value, unit = display_metric(m['value'], m['unit'])
+            summary = fmt(value)+' '+unit+' / '+direction(m['direction'])
+        else:
+            summary = 'No valid measurement'
+        coverage.append([label,summary,result['status']])
     story += [table(coverage,[255,175,81]),Spacer(1,8),p('Representative cases are selected by workload definition, not the largest score. Full results and precision/size details follow. Compare only matching configurations.','LabSmall')]
     if run.get("error"):story += [p("Run finding: "+run["error"])]
     power=[(s['ts'],s['power_w']) for s in run.get('telemetry',[]) if s.get('power_w') is not None]
@@ -121,11 +135,17 @@ def report_pdf(run):
             if not case.get("metrics"):
                 rows.append([case["name"],case["status"],case.get("reason","")]);continue
             for i,m in enumerate(case["metrics"]):
-                rows.append([(case["name"]+" / " if i==0 else "")+m["name"],fmt(m["value"])+" "+m["unit"],direction(m["direction"])])
+                value, unit = display_metric(m["value"], m["unit"])
+                rows.append([(case["name"]+" / " if i==0 else "")+m["name"],fmt(value)+" "+unit,direction(m["direction"])])
         if len(rows)>1:story.append(table(rows,[250,120,141]))
         for case in result.get('cases',[]):
             series=case.get('series',[])
-            if len(series)>1:story += [Spacer(1,12),plot([(s['elapsed'],s['throughput']) for s in series],case['name']+' - throughput over time','')]
+            if len(series)>1:
+                metrics=case.get('metrics',[])
+                metric_unit=metrics[0].get('unit','') if metrics else ''
+                factor=0.001 if metric_unit=='GFLOP/s' else 1
+                chart_unit='TFLOP/s' if metric_unit=='GFLOP/s' else metric_unit
+                story += [Spacer(1,12),plot([(s['elapsed'],s['throughput']*factor) for s in series],case['name']+' - throughput over time',chart_unit)]
         story += [p("Methodology","LabHeading"),p(test.get("method","")),p("Timing boundary: "+test.get("boundary",""))]
         for case in result.get("cases",[]):
             block=[p(case["name"],"LabHeading"),p("Status: "+case["status"])]
@@ -137,7 +157,11 @@ def report_pdf(run):
             variability=[]
             for m in case.get("metrics",[]):
                 s=m.get("statistics")
-                if s:variability.append(f"{m['name']}: median {fmt(s['median'])}; min {fmt(s['minimum'])}; max {fmt(s['maximum'])}; CV {fmt(s['cv_pct'])}%; n={len(s['samples'])}.")
+                if s:
+                    median, unit = display_metric(s['median'], m['unit'])
+                    minimum, _ = display_metric(s['minimum'], m['unit'])
+                    maximum, _ = display_metric(s['maximum'], m['unit'])
+                    variability.append(f"{m['name']}: median {fmt(median)} {unit}; min {fmt(minimum)}; max {fmt(maximum)}; CV {fmt(s['cv_pct'])}%; n={len(s['samples'])}.")
             if variability:block.append(p(" ".join(variability),"LabSmall"))
             story.append(KeepTogether(block))
     story += [PageBreak(),p("Configuration & provenance","LabTitle"),p("Current editable metadata is separated from original detected evidence. Changes do not rewrite measured results.")]

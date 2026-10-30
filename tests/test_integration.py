@@ -35,7 +35,7 @@ class EndToEndTests(unittest.TestCase):
         self.assertEqual(len(run['results']),2)
         self.assertTrue(report_pdf(run).startswith(b'%PDF'))
         self.assertIn(b'SIMULATED',report_html(run))
-        self.assertIn(b'GFLOP/s',report_csv(run))
+        self.assertIn(b'TFLOP/s',report_csv(run))
         second=continuation(self.store,rid,unfinished_only=False)
         self.assertEqual(self.complete(second)['parent'],rid)
     def test_cancel_while_queued_preserves_an_empty_run(self):

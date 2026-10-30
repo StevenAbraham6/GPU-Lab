@@ -11,16 +11,18 @@ service=0
 video_build=1
 app_only=0
 system_packages=1
+update_app=0
 usage() {
   cat <<'EOF'
 GPU Lab installer
   bash install.sh [--backend auto|nvidia|amd|both|none] [--service]
-                  [--app-only] [--skip-video-build] [--no-system-packages]
+                  [--app-only] [--update-app] [--skip-video-build] [--no-system-packages]
   --service             Start the UI as a persistent user systemd service.
   --app-only            UI/reports only; no GPU runtimes or video compilation.
+  --update-app          Update only the app and browser-update setup; keep GPU runtimes/tools.
   --skip-video-build    Use distribution FFmpeg (VMAF may be unavailable).
   --no-system-packages  Prerequisites already supplied; do not run apt.
-Variables: GPU_LAB_PREFIX, GPU_LAB_HOME, GPU_LAB_REPO, GPU_LAB_REF,
+Variables: GPU_LAB_PREFIX, GPU_LAB_HOME, GPU_LAB_REPO, GPU_LAB_REF, GPU_LAB_UPDATE_BRANCH,
            GPU_LAB_NVIDIA_INDEX, GPU_LAB_NVIDIA_TORCH,
            GPU_LAB_AMD_INDEX, GPU_LAB_AMD_TORCH.
 EOF
@@ -32,10 +34,12 @@ while (($#)); do
     --app-only) app_only=1; backend=none; video_build=0; shift;;
     --skip-video-build) video_build=0; shift;;
     --no-system-packages) system_packages=0; shift;;
+    --update-app) update_app=1; shift;;
     -h|--help) usage; exit 0;;
     *) printf 'Unknown option: %s\n' "$1" >&2; exit 2;;
   esac
 done
+if [[ "$update_app" == 1 ]]; then backend=none;video_build=0;system_packages=0;fi
 case "$backend" in auto|nvidia|amd|both|none);; *) usage; exit 2;; esac
 if [[ "$app_only" == 0 && "$(uname -s)" != Linux ]]; then
   printf 'GPU execution targets Linux. On macOS use: bash install.sh --app-only\n' >&2; exit 2
@@ -88,6 +92,20 @@ py="$GPU_LAB_PREFIX/venv/bin/python"
 "$py" -m pip install --upgrade pip wheel setuptools
 extra=""
 if [[ "$app_only" == 0 ]]; then extra='[opencl]'; fi
+if [[ "$update_app" == 1 ]]; then
+  extra=""
+  if "$py" -c 'import importlib.util; assert importlib.util.find_spec("pyopencl") is not None' 2>/dev/null; then extra='[opencl]';fi
+fi
+# During the one-time upgrade, avoid replacing packages underneath a live service.
+service_stopped=0
+restore_service() {
+  if [[ "$service_stopped" == 1 ]]; then systemctl --user start gpu-lab || true;fi
+}
+trap restore_service EXIT
+if [[ "$update_app" == 1 && "$service" == 1 ]] && command -v systemctl >/dev/null && systemctl --user is-active --quiet gpu-lab; then
+  systemctl --user stop gpu-lab
+  service_stopped=1
+fi
 "$py" -m pip install "$source_dir$extra"
 # Install the app package into its own venv. Both math stacks coexist in separate environments.
 for vendor in nvidia amd; do
@@ -106,14 +124,23 @@ if [[ "$video_build" == 1 && "$app_only" == 0 ]]; then
   bash "$source_dir/scripts/build-video.sh" "$GPU_LAB_PREFIX/tools"
 fi
 # Quote executable paths with Python rather than interpolating shell source.
-"$py" - "$GPU_LAB_PREFIX" "$GPU_LAB_DATA" "$GPU_LAB_BIN/gpu-lab" <<'PY'
-import pathlib,shlex,sys
-prefix,data,dest=map(pathlib.Path,sys.argv[1:])
+"$py" - "$GPU_LAB_PREFIX" "$GPU_LAB_DATA" "$GPU_LAB_BIN/gpu-lab" "$source_dir" "$service" "$extra" "${GPU_LAB_UPDATE_BRANCH:-main}" <<'PY'
+import json,pathlib,shlex,subprocess,sys
+prefix,data,dest,source=map(lambda value:pathlib.Path(value).expanduser().absolute(),sys.argv[1:5])
+deployment=prefix/'deployment.json'
+previous=json.loads(deployment.read_text()) if deployment.exists() else {}
+commit=subprocess.run(['git','-C',str(source),'rev-parse','HEAD'],capture_output=True,text=True)
+configuration=dict(source=str(source.resolve()),python=str(prefix/'venv/bin/python'),updater_python=str(pathlib.Path(sys._base_executable).resolve()),
+                   branch=sys.argv[7],service='gpu-lab.service' if sys.argv[5]=='1' else previous.get('service'),
+                   opencl=bool(sys.argv[6]),installed_commit=commit.stdout.strip() if commit.returncode==0 else None,installation_uncertain=False)
+deployment.write_text(json.dumps(configuration,indent=2)+'\n');deployment.chmod(0o600)
 q=shlex.quote
 text='#!/usr/bin/env bash\nset -e\n'
 text+='export GPU_LAB_HOME="${GPU_LAB_HOME:-'+str(data).replace('"','\\"').replace('$','\\$').replace('`','\\`')+'}"\n'
+text+='export GPU_LAB_DEPLOYMENT='+q(str(deployment))+'\n'
 text+='export PATH='+q(str(prefix/'tools/bin'))+':"$PATH"\n'
-text+='exec '+q(str(prefix/'venv/bin/python'))+' -m gpulab "$@"\n'
+# Isolate imports from the current checkout while retaining relative CLI file paths.
+text+='exec '+q(str(prefix/'venv/bin/python'))+' -I -m gpulab "$@"\n'
 dest.write_text(text);dest.chmod(0o755)
 PY
 if [[ "$service" == 1 ]]; then
@@ -127,6 +154,8 @@ Path(sys.argv[1]).write_text('[Unit]\nDescription=GPU Lab web workspace\nAfter=n
 PY
   systemctl --user daemon-reload
   systemctl --user enable --now gpu-lab
+  systemctl --user restart gpu-lab
+  service_stopped=0
 fi
 "$GPU_LAB_BIN/gpu-lab" devices
 printf '\nGPU Lab installed. Backend selection: %s\n' "$backend"

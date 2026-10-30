@@ -5,6 +5,7 @@ import re
 import secrets
 import threading
 import time
+from contextlib import closing
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from pathlib import Path
@@ -17,6 +18,7 @@ from .reports import report_csv,report_html,report_pdf
 from .runner import DEMO_GPU,cancel,continuation,create_run
 from .store import Store,validate_metadata
 from .util import now
+from .updates import MaintenanceConflict,Updates
 
 class LabServer(ThreadingHTTPServer):
     daemon_threads=True
@@ -24,6 +26,8 @@ class LabServer(ThreadingHTTPServer):
         super().__init__(address,Handler)
         self.store=store;self.token=token;self.session=secrets.token_urlsafe(32)
         self.inventory=None;self.inventory_time=0;self.inventory_lock=threading.Lock()
+        self.instance=secrets.token_hex(16)
+        self.updates=Updates(store,self.instance,f"http://127.0.0.1:{self.server_port}/api/health")
     def devices(self):
         with self.inventory_lock:
             if self.inventory is None or time.monotonic()-self.inventory_time>30:
@@ -69,7 +73,7 @@ class Handler(BaseHTTPRequestHandler):
                 hostname=urlparse('http://'+self.headers.get('Host','')).hostname
                 if hostname not in ('127.0.0.1','localhost','::1'):
                     return self.send(403,{'error':'Unexpected Host header for a loopback workspace'})
-            if path in ("/","/app.js","/style.css","/favicon.svg") and method=="GET":
+            if path in ("/","/app.js","/settings.js","/style.css","/favicon.svg") and method=="GET":
                 name={"/":"index.html"}.get(path,path[1:]);file=Path(__file__).parent/"static"/name
                 ctype={".html":"text/html; charset=utf-8",".js":"text/javascript; charset=utf-8",".css":"text/css; charset=utf-8",".svg":"image/svg+xml"}[file.suffix]
                 return self.send(200,file.read_bytes(),ctype)
@@ -83,8 +87,16 @@ class Handler(BaseHTTPRequestHandler):
                     body=self.body()
                     if self.server.token and not hmac.compare_digest(str(body.get("token","")),self.server.token):return self.send(401,{"error":"Incorrect access token"})
                     return self.send(200,{"ok":True},cookie=f"gpu_lab_session={self.server.session}; HttpOnly; SameSite=Strict; Path=/")
+            if path=="/api/health" and method=="GET":
+                from . import __version__
+                with closing(self.server.store.connect()) as db:db.execute("SELECT 1").fetchone()
+                return self.send(200,dict(ok=True,version=__version__,instance=self.server.instance,commit=self.server.updates.config.get("installed_commit")))
             if not self.authorized():return self.send(401,{"error":"Authentication required"})
             store=self.server.store
+            if path=="/api/settings" and method=="GET":return self.send(200,self.server.updates.status())
+            if path in ("/api/settings/check","/api/settings/update","/api/settings/restart") and method=="POST":
+                self.body()
+                return self.send(202,self.server.updates.start(path.rsplit("/",1)[1]))
             if path=="/api/catalog" and method=="GET":return self.send(200,dict(tests=TESTS,profiles=PROFILES,defaults=config()))
             if path=="/api/devices" and method=="GET":return self.send(200,self.server.devices())
             if path=="/api/runs" and method=="GET":return self.send(200,store.list())
@@ -98,7 +110,9 @@ class Handler(BaseHTTPRequestHandler):
             if path=="/api/runs" and method=="POST":
                 body=self.body();cfg=config(body.get("profile","quick"),**body.get("config",{}))
                 validate_metadata(body.get('metadata',{}))
-                rid=create_run(store,body.get("gpu"),body.get("tests"),cfg,simulated=bool(body.get("simulated")),allow_partial=bool(body.get("allow_partial")))
+                with self.server.updates.lock:
+                    self.server.updates.ensure_idle()
+                    rid=create_run(store,body.get("gpu"),body.get("tests"),cfg,simulated=bool(body.get("simulated")),allow_partial=bool(body.get("allow_partial")))
                 if body.get("metadata"):store.edit_metadata(rid,body["metadata"])
                 return self.send(201,{"id":rid})
             if path=="/api/import" and method=="POST":return self.send(201,{"id":store.import_run(self.body())})
@@ -112,7 +126,10 @@ class Handler(BaseHTTPRequestHandler):
                 if method=="POST" and action in ("cancel","resume","reproduce"):
                     self.body()
                     if action=="cancel":cancel(store,rid);return self.send(200,{"ok":True})
-                    return self.send(201,{"id":continuation(store,rid,unfinished_only=action=="resume")})
+                    with self.server.updates.lock:
+                        self.server.updates.ensure_idle()
+                        next_id=continuation(store,rid,unfinished_only=action=="resume")
+                    return self.send(201,{"id":next_id})
                 if method=="GET" and action in ("report.pdf","report.html","results.csv","bundle.json"):
                     run=store.get(rid);stem="gpu-lab-"+rid[:8]
                     if action=="report.pdf":data,ctype=report_pdf(run),"application/pdf"
@@ -127,6 +144,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send(200,file.read_bytes()[-512000:] if file.exists() else b"Log not available yet","text/plain; charset=utf-8")
             self.send(404,{"error":"Not found"})
         except KeyError as e:self.send(404,{"error":f"Not found: {e}"})
+        except MaintenanceConflict as e:self.send(409,{"error":str(e)})
         except (ValueError,TypeError) as e:self.send(400,{"error":str(e)})
         except (BrokenPipeError,ConnectionResetError):pass
         except Exception as e:

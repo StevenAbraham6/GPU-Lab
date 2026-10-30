@@ -14,10 +14,15 @@ from .preflight import check
 from .store import ACTIVE, Store
 from .telemetry import integrate, sample
 from .util import atomic_json, fingerprint, now, process_marker
+from .updates import launch_guard
 
 DEMO_GPU=dict(id="demo:0",name="Demonstration GPU — synthetic data",vendor="demo",simulated=True,vram_bytes=24*1024**3)
 
 def create_run(store, gpu_selector=None, names=None, cfg=None, metadata=None, simulated=False, parent=None, allow_partial=False):
+    with launch_guard(store):
+        return _create_run(store,gpu_selector,names,cfg,metadata,simulated,parent,allow_partial)
+
+def _create_run(store, gpu_selector=None, names=None, cfg=None, metadata=None, simulated=False, parent=None, allow_partial=False):
     cfg_values=dict(cfg or {});profile=cfg_values.pop('profile','quick')
     cfg=config(profile,**cfg_values);tests=select_tests(names)
     inventory=discover() if not simulated else dict(host={"hostname":"demonstration","os":"simulated","cpu":"simulated"},gpus=[DEMO_GPU])

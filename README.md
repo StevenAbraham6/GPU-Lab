@@ -105,6 +105,24 @@ systemctl --user restart gpu-lab
 
 The unit uses `KillMode=process`: restarting the UI does not intentionally kill detached benchmark workers. A reboot cannot preserve an in-flight GPU operation; the run will be marked interrupted and completed test records remain available.
 
+### Browser updates and restarts
+
+Open **Settings** for **Check for updates**, **Update to latest**, **Restart service**, and the latest maintenance log. New service installations include this setup. For an existing installation, deploy this source revision to the server and run once from its Git checkout:
+
+```bash
+bash install.sh --update-app --service
+```
+
+This app-only upgrade skips apt, GPU runtime installation, and video builds, and retains the existing OpenCL extra when installed. Use the original `GPU_LAB_PREFIX`, `GPU_LAB_HOME`, and `GPU_LAB_BIN` overrides if the server has custom paths. Run as the same Linux user that owns the application. Browser maintenance needs a Git checkout with an `origin` remote, noninteractive Git authentication for private repositories, and a working user systemd manager. Archive-only installations and manually launched development servers show setup instructions instead of enabling the controls. The installed service remains on port 8080 by default.
+
+Updates fetch the configured branch (`main` by default; override with `GPU_LAB_UPDATE_BRANCH` during setup). Checks fetch metadata without changing installed code. Updates require a clean checkout and fast-forward history; local edits, untracked files, and divergent commits are preserved and stop the update. The exact installed and available commit IDs are shown even when the package version number is unchanged. Only code already published to the configured remote is available.
+
+An update runs in a separate transient user service from a saved, stdlib-only worker outside the app package. It waits for active local benchmarks to finish and pauses new launches from both the UI and CLI. It then fast-forwards the checkout, stops the web service, backs up SQLite, installs the app and any required application dependencies into the existing venv, starts the service, and checks its new instance and installed commit. It does not reinstall vendor drivers, CUDA/ROCm PyTorch environments, or FFmpeg. Restart performs the wait/stop/start sequence without Git or package installation.
+
+During installation the browser shows a reconnecting screen and reloads when the server returns. An access-token login must be entered again after restart. Logs, operation state, previous commit, and database backups persist under `$GPU_LAB_HOME/maintenance/` (default `~/.local/share/gpu-lab/maintenance/`), including when the browser closes. The latest operation and log appear in Settings; older operation folders are retained for manual inspection.
+
+This is an in-place lab updater, without automatic rollback. A failed package install attempts to start the service again and marks the installed version uncertain. If the web app remains unavailable, inspect the latest maintenance log and `journalctl --user -u gpu-lab`; correct the installation from the terminal, then run `systemctl --user restart gpu-lab`. The previous source commit and SQLite backup are recovery aids; reverting Git alone does not restore dependencies or reverse database migrations. A host reboot interrupts maintenance; the next Settings status check detects a missing worker and allows retrying.
+
 ## First hardware run
 
 ```bash
@@ -155,7 +173,7 @@ gpu-lab run all --gpu GPU_ID --allow-partial
 
 | ID | Workload | Output and direction |
 |---|---|---|
-| `arithmetic` | Register-heavy FP32 FMA and wrapping INT32 multiply/add | GFLOP/s or GOP/s: **higher** |
+| `arithmetic` | Register-heavy FP32 FMA and wrapping INT32 multiply/add | TFLOP/s or GOP/s: **higher** |
 | `matrix` | Dense square/rectangular/batched GEMM, FP32/FP16/BF16/INT8 where available | TFLOP/s or TOP/s: **higher** |
 | `memory` | Read/write/copy, strided copy, working-set sweeps, dependent pointer chase | GB/s: **higher**; ns/access: **lower** |
 | `transfer` | Pinned host upload/download and simultaneous directions | GB/s: **higher**; completion µs: **lower** |
@@ -166,6 +184,8 @@ gpu-lab run all --gpu GPU_ID --allow-partial
 | `integrity` | Address-dependent VRAM patterns, mismatch count, injected-error verifier self-test | Errors: **lower**; tested MiB: **coverage**, not a performance score |
 
 All arithmetic outputs are used. Correctness checks run before performance reporting. Integrity verification includes a deliberately injected error to prove the GPU checker can detect one; that injected error is not counted as a hardware fault.
+
+Human-facing benchmark views and PDF/HTML/CSV reports display FP32 throughput in TFLOP/s. Raw run data and JSON bundles retain the original GFLOP/s measurements; 1 TFLOP/s = 1,000 GFLOP/s.
 
 ### Floating point and integer interpretation
 
