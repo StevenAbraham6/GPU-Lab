@@ -28,7 +28,7 @@ def parser():
             q.add_argument("--name");q.add_argument("--description",default="");q.add_argument("--tag",action="append",default=[])
             q.add_argument("--allow-partial",action="store_true",help="Explicitly skip blocked per-test dependencies; global blocks still stop")
             q.add_argument("--wait",action="store_true",help="Watch the detached run until completion")
-    q=sub.add_parser("serve");q.add_argument("--host",default="127.0.0.1");q.add_argument("--port",type=int,default=8080);q.add_argument("--token-file")
+    q=sub.add_parser("serve");q.add_argument("--host",default="127.0.0.1");q.add_argument("--port",type=int,default=8080);q.add_argument("--token-file");q.add_argument("--open-access",action="store_true",help="Allow unauthenticated network access")
     sub.add_parser("list")
     for name in ("show","wait","cancel","resume","reproduce"):
         q=sub.add_parser(name);q.add_argument("run_id")
@@ -79,8 +79,8 @@ def main():
             if args.wait:return wait(store,rid)
         elif cmd=="serve":
             from .server import serve
-            token=Path(args.token_file).read_text().strip() if args.token_file else os.environ.get("GPU_LAB_TOKEN")
-            serve(store,args.host,args.port,token)
+            token=None if args.open_access else (Path(args.token_file).read_text().strip() if args.token_file else os.environ.get("GPU_LAB_TOKEN"))
+            serve(store,args.host,args.port,token,open_access=args.open_access)
         elif cmd=="list":output(store.list())
         elif cmd=="show":store.recover();output(store.get(args.run_id,samples=False))
         elif cmd=="wait":return wait(store,args.run_id)

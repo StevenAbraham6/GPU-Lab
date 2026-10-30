@@ -349,6 +349,14 @@ exec ''' + shlex.quote(sys.executable) + ''' "$@"
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(override.read_text(), config)
             self.assertEqual(token.read_text(), original)
+        result = subprocess.run(args + ["--open-network-service"], capture_output=True, text=True, timeout=30, env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        open_config = override.read_text()
+        self.assertIn("--host 0.0.0.0 --port 8080 --open-access", open_config)
+        self.assertNotIn("--token-file", open_config)
+        result = subprocess.run(args + ["--service"], capture_output=True, text=True, timeout=30, env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(override.read_text(), open_config)
 
 
 if __name__ == "__main__":

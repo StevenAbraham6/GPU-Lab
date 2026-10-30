@@ -13,6 +13,7 @@ app_only=0
 system_packages=1
 update_app=0
 network_service=0
+open_network_service=0
 usage() {
   cat <<'EOF'
 GPU Lab installer
@@ -20,6 +21,7 @@ GPU Lab installer
                   [--app-only] [--update-app] [--skip-video-build] [--no-system-packages]
   --service             Start the UI as a persistent user systemd service.
   --network-service     Configure the service for authenticated network access (implies --service).
+  --open-network-service Configure network access without a token (implies --service).
   --app-only            UI/reports only; no GPU runtimes or video compilation.
   --update-app          Update only the app and browser-update setup; keep GPU runtimes/tools.
   --skip-video-build    Use distribution FFmpeg (VMAF may be unavailable).
@@ -34,6 +36,7 @@ while (($#)); do
     --backend) backend="${2:?Missing backend}"; shift 2;;
     --service) service=1; shift;;
     --network-service) service=1; network_service=1; shift;;
+    --open-network-service) service=1; open_network_service=1; shift;;
     --app-only) app_only=1; backend=none; video_build=0; shift;;
     --skip-video-build) video_build=0; shift;;
     --no-system-packages) system_packages=0; shift;;
@@ -43,6 +46,9 @@ while (($#)); do
   esac
 done
 if [[ "$update_app" == 1 ]]; then backend=none;video_build=0;system_packages=0;fi
+if [[ "$network_service" == 1 && "$open_network_service" == 1 ]]; then
+  printf 'Choose either --network-service or --open-network-service.\n' >&2; exit 2
+fi
 case "$backend" in auto|nvidia|amd|both|none);; *) usage; exit 2;; esac
 if [[ "$app_only" == 0 && "$(uname -s)" != Linux ]]; then
   printf 'GPU execution targets Linux. On macOS use: bash install.sh --app-only\n' >&2; exit 2
@@ -174,6 +180,16 @@ def quote(value):
 override.write_text('[Service]\nExecStart=\nExecStart=' + quote(exe) + ' serve --host 0.0.0.0 --port 8080 --token-file ' + quote(token) + '\n')
 PY
     printf 'Network access enabled on port 8080. Token file: %s/network-token\n' "$GPU_LAB_PREFIX"
+  fi
+  if [[ "$open_network_service" == 1 ]]; then
+    mkdir -p "$HOME/.config/systemd/user/gpu-lab.service.d"
+    "$py" - "$HOME/.config/systemd/user/gpu-lab.service.d/network.conf" "$GPU_LAB_BIN/gpu-lab" <<'PY'
+from pathlib import Path
+import sys
+exe = sys.argv[2].replace('\\', '\\\\').replace('"', '\\"').replace('%', '%%')
+Path(sys.argv[1]).write_text('[Service]\nExecStart=\nExecStart="' + exe + '" serve --host 0.0.0.0 --port 8080 --open-access\n')
+PY
+    printf 'Network access enabled on port 8080 without authentication.\n'
   fi
   systemctl --user daemon-reload
   systemctl --user enable --now gpu-lab

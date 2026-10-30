@@ -119,6 +119,8 @@ The service listens on all IPv4 interfaces on port 8080. From an authorized netw
 
 The network setting is a systemd drop-in that remains in place when the installer rewrites the base service, and browser updates leave it intact. Maintenance verifies the restarted service through loopback, which remains reachable when listening on `0.0.0.0`. To return to loopback-only access, remove `~/.config/systemd/user/gpu-lab.service.d/network.conf`, then run `systemctl --user daemon-reload` and `systemctl --user restart gpu-lab`.
 
+For an unauthenticated listener, run `bash install.sh --update-app --open-network-service` instead. Anyone who can reach port 8080 can use the application, view results, launch benchmarks, and update or restart it. Restrict network access to trusted clients with the VPN and firewall. This choice also persists across browser updates and service reinstalls; run `--network-service` to restore token authentication.
+
 ### Browser updates and restarts
 
 Open **Settings** for **Check for updates**, **Update to latest**, **Restart service**, and the latest maintenance log. New service installations include this setup. For an existing installation, deploy this source revision to the server and run once from its Git checkout:

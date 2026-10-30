@@ -151,8 +151,8 @@ class Handler(BaseHTTPRequestHandler):
             import traceback;traceback.print_exc()
             self.send(500,{"error":str(e)})
 
-def serve(store,host="127.0.0.1",port=8080,token=None):
-    if host not in ("127.0.0.1","localhost","::1") and not token:
+def serve(store,host="127.0.0.1",port=8080,token=None,open_access=False):
+    if host not in ("127.0.0.1","localhost","::1") and not token and not open_access:
         raise ValueError("A non-loopback interface requires GPU_LAB_TOKEN or --token-file. Use an SSH tunnel for private access.")
     store.recover();server=LabServer((host,port),store,token)
     print(f"GPU Lab: http://{host}:{server.server_port} · data: {store.root}",flush=True)
