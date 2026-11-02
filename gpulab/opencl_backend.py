@@ -26,7 +26,7 @@ class OpenCL:
         self.ctx = cl.Context([dev])
         self.queue = self.new_queue()
         self.program = cl.Program(self.ctx, (Path(__file__).parent / "kernels/core.cl").read_text()).build(options=[])
-        self.k = {name: cl.Kernel(self.program, name) for name in ("arithmetic_fp", "arithmetic_int", "read_memory", "write_memory", "copy_memory", "chase", "tiny", "fill_pattern", "verify_pattern")}
+        self.k = {name: cl.Kernel(self.program, name) for name in ("arithmetic_fp", "arithmetic_int", "arithmetic_fp_4", "arithmetic_fp_8", "arithmetic_fp_16", "arithmetic_fp_32", "read_memory", "write_memory", "copy_memory", "chase", "tiny", "fill_pattern", "verify_pattern")}
 
     def new_queue(self):
         return self.cl.CommandQueue(self.ctx, properties=self.cl.command_queue_properties.PROFILING_ENABLE)
@@ -79,7 +79,48 @@ class OpenCL:
         for kind in ("fp32", "int32"):
             fn, work, buf, settings = self.arithmetic_job(kind)
             cases.append(timed_loop(fn, cfg, work, "GFLOP/s" if kind=="fp32" else "GOP/s", kind.upper(), settings))
+        for chains in (4, 8, 16, 32):
+            fn, work, buf, settings = self.arithmetic_sweep_job(chains)
+            case = timed_loop(fn, cfg, work, "GFLOP/s", f"FP32 queued · {chains} accumulators", settings)
+            # timed_loop counts batches; expose the actual number of launches too.
+            for interval in case["intervals"]:
+                interval["batches"] = interval["dispatches"]
+                interval["dispatches"] *= settings["queue_depth"]
+            wall = stats([interval["wall_rate"] for interval in case["intervals"]])
+            case["metrics"].append(metric("elapsed throughput", wall["median"], "GFLOP/s", "higher", statistics=wall))
+            case["timing"] = "sum of non-overlapping device events for throughput; batch wall time for elapsed throughput and efficiency"
+            cases.append(case)
         return cases
+
+    def arithmetic_sweep_job(self, chains, depth=8):
+        """Queue in-order FMA jobs with separate, checked scalar dependency chains."""
+        if chains not in (4, 8, 16, 32) or depth < 1:
+            raise ValueError("Unsupported FP32 sweep configuration")
+        np, cl = self.np, self.cl
+        n, iterations, vectors = 262144, 1024, chains // 4
+        out = self.buffer(n * vectors * 16)
+        kernel = self.k[f"arithmetic_fp_{chains}"]
+        def fn():
+            events = [kernel(self.queue, (n,), None, out, np.uint32(iterations)) for _ in range(depth)]
+            events[-1].wait()
+            durations = [(ev.profile.end-ev.profile.start)*1e-9 for ev in events]
+            if any(seconds <= 0 for seconds in durations):
+                raise RuntimeError("Non-positive device timer")
+            return sum(durations)
+        fn()
+        actual = np.empty((64, vectors, 4), dtype=np.float32)
+        cl.enqueue_copy(self.queue, actual, out).wait()
+        ids = np.arange(64, dtype=np.uint32)
+        base = np.stack([.01*(ids%17), .02*(ids%13), .03*(ids%11), .04*(ids%7)], axis=1).astype(np.float32)
+        ref = np.stack([base + np.float32(v * .001) for v in range(vectors)], axis=1)
+        for _ in range(iterations):
+            ref = (ref.astype(np.float64)*float(np.float32(1.000001)) + float(np.float32(.000001))).astype(np.float32)
+        if not np.allclose(actual, ref, rtol=2e-5, atol=2e-6):
+            raise ArithmeticError(f"FP32 {chains}-accumulator validation failed")
+        return fn, n * iterations * chains * 2 * depth / 1e9, out, dict(
+            items=n, iterations=iterations, precision="fp32", independent_accumulators=chains,
+            queue_depth=depth, arithmetic="explicit FMA", benchmark_version=2,
+            output_validation="first 64 work items, all accumulators")
 
     def memory(self, cfg):
         np, cl = self.np, self.cl

@@ -4,8 +4,8 @@ from copy import deepcopy
 TESTS = [
     dict(id="arithmetic", group="compute", title="General arithmetic", backend="opencl",
          summary="Register-heavy FP32 FMA and INT32 arithmetic on general compute units.",
-         method="Independent accumulators per work item; fixed iteration count; FP contraction controlled. Integer operations are modulo 2^32. Outputs are checked against host references. No matrix acceleration is requested.",
-         boundary="OpenCL event timing excludes compilation and allocation; efficiency uses continuous-loop wall time."),
+         method="The original FP32 and INT32 cases are retained. Additional FP32 cases sweep 4, 8, 16 and 32 independent scalar FMA chains per work item, with eight in-order launches queued per batch. Integer operations are modulo 2^32. Outputs are checked against host references. No matrix acceleration is requested.",
+         boundary="OpenCL event throughput excludes compilation, allocation and gaps between GPU jobs. Queued cases also report elapsed throughput including host submission and waits. Efficiency uses continuous-loop wall time."),
     dict(id="matrix", group="compute", title="Dense matrix math", backend="torch",
          summary="FP32, FP16, BF16 and INT8 GEMM with correctness checks for each precision.",
          method="Vendor PyTorch matmul on fixed seeded matrices. TF32 disabled, FP16/BF16 reduced-precision reductions disabled where exposed; accumulation policy recorded. INT8 uses the probed private torch._int_mm API and INT32 output; unavailable paths are skipped. Dense operations count a multiply and add as two operations. Library dispatch is not proof of a specific hardware instruction.",

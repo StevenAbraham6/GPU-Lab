@@ -187,7 +187,7 @@ gpu-lab run all --gpu GPU_ID --allow-partial
 
 | ID | Workload | Output and direction |
 |---|---|---|
-| `arithmetic` | Register-heavy FP32 FMA and wrapping INT32 multiply/add | TFLOP/s or GOP/s: **higher** |
+| `arithmetic` | Original FP32 FMA and wrapping INT32 multiply/add, plus queued FP32 cases with 4, 8, 16 and 32 independent accumulators | TFLOP/s or GOP/s: **higher** |
 | `matrix` | Dense square/rectangular/batched GEMM, FP32/FP16/BF16/INT8 where available | TFLOP/s or TOP/s: **higher** |
 | `memory` | Read/write/copy, strided copy, working-set sweeps, dependent pointer chase | GB/s: **higher**; ns/access: **lower** |
 | `transfer` | Pinned host upload/download and simultaneous directions | GB/s: **higher**; completion µs: **lower** |
