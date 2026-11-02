@@ -134,6 +134,52 @@ class Store:
         with self.connect() as db:
             return [dict(ts=r[0], **json.loads(r[1])) for r in db.execute("SELECT ts,data FROM telemetry WHERE run_id=? AND ts BETWEEN ? AND ? ORDER BY ts", (rid, start, end))]
 
+    def telemetry_overview(self, rid, buckets=400):
+        """Return original extrema, endpoints and transitions in bounded time buckets."""
+        self.directory(rid)
+        keys = ("power_w", "clock_mhz", "utilization_pct", "memory_used_mib")
+        with self.connect() as db:
+            bounds = db.execute("SELECT MIN(ts),MAX(ts) FROM telemetry WHERE run_id=?", (rid,)).fetchone()
+            if bounds[0] is None:
+                return []
+            start, end = bounds
+            span = end - start or 1
+            selected, bucket, group, previous = {}, None, [], None
+            def keep(row):
+                selected[row["seq"]] = row
+            def flush(rows):
+                if not rows:
+                    return
+                keep(rows[0]); keep(rows[-1])
+                for key in keys:
+                    valid = [r for r in rows if isinstance(r.get(key), (int, float)) and r[key] >= 0]
+                    if valid:
+                        keep(min(valid, key=lambda r: r[key])); keep(max(valid, key=lambda r: r[key]))
+            for record in db.execute("SELECT seq,ts,test_id,data FROM telemetry WHERE run_id=? ORDER BY ts,seq", (rid,)):
+                row = dict(seq=record[0], ts=record[1], test_id=record[2], **json.loads(record[3]))
+                index = min(buckets - 1, int((row['ts'] - start) / span * buckets))
+                if index != bucket:
+                    flush(group); group = []; bucket = index
+                if previous is not None and (row['test_id'] != previous['test_id'] or any((row.get(k) is None) != (previous.get(k) is None) for k in keys)):
+                    keep(previous); keep(row)
+                group.append(row); previous = row
+            flush(group)
+        return [{k: v for k, v in row.items() if k != 'seq'} for row in sorted(selected.values(), key=lambda r: (r['ts'], r['seq']))]
+
+    def telemetry_nearest(self, rid, stamp, key):
+        if key not in ("power_w", "clock_mhz", "utilization_pct", "memory_used_mib"):
+            raise ValueError("Invalid telemetry metric")
+        self.directory(rid)
+        with self.connect() as db:
+            # Search each side of the pointer using the (run_id, ts) index.
+            rows = []
+            for operator, order in (("<=", "DESC"), (">=", "ASC")):
+                sql = f"SELECT ts,test_id,data FROM telemetry WHERE run_id=? AND ts {operator} ? AND json_type(data, ?) IN ('integer','real') AND json_extract(data, ?) >= 0 ORDER BY ts {order} LIMIT 1"
+                row = db.execute(sql, (rid, stamp, '$.'+key, '$.'+key)).fetchone()
+                if row:
+                    rows.append(dict(ts=row[0], test_id=row[1], **json.loads(row[2])))
+        return min(rows, key=lambda row: abs(row['ts']-stamp)) if rows else None
+
     def recover(self):
         with self.connect() as db:
             rows = db.execute("SELECT id,pid,marker,created FROM runs WHERE source='local' AND status IN ('queued','running','preflight','cancelling')").fetchall()

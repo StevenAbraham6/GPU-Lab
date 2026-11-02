@@ -3,3 +3,5 @@
 .case-details{position:relative;border-top:1px solid #edf1f3}.case-details details{border-top:0}.case-details summary{padding-right:110px}.case-copy{position:absolute;top:7px;right:22px;padding:6px 10px;font-size:11px;z-index:1}
 
 .telemetry-chart{overflow:visible}.chart-band-0{fill:#e5f3ef}.chart-band-1{fill:#eaf0f8}.chart-workloads{flex-wrap:wrap}.swatch.band-0{background:#b3d9ca}.swatch.band-1{background:#bdcfe5}
+
+.chart-loading{min-height:180px;display:grid;place-items:center;color:var(--muted);font-size:12px;background:#f8fafb;border-radius:8px}

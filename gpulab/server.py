@@ -121,7 +121,20 @@ class Handler(BaseHTTPRequestHandler):
             match=re.fullmatch(r"/api/runs/([0-9a-f-]{36})(?:/(.*))?",path)
             if match:
                 rid,action=match.groups();store.recover()
-                if method=="GET" and not action:return self.send(200,store.get(rid))
+                if method=="GET" and not action:
+                    if query.get("view") == ["summary"]:
+                        run=store.get(rid,samples=False)
+                        for result in run["results"]:
+                            result["cases"]=[{key:case[key] for key in ("name","status","settings","metrics") if key in case} for case in result.get("cases",[])]
+                        return self.send(200,run)
+                    return self.send(200,store.get(rid))
+                if method=="GET" and action=="results":return self.send(200,store.get(rid,samples=False)["results"])
+                if method=="GET" and action=="telemetry":return self.send(200,store.telemetry_overview(rid))
+                if method=="GET" and action=="telemetry/nearest":
+                    import math
+                    stamp=float(query["ts"][0]);key=query["metric"][0]
+                    if not math.isfinite(stamp):raise ValueError("Invalid timestamp")
+                    return self.send(200,store.telemetry_nearest(rid,stamp,key))
                 if method=="PATCH" and not action:return self.send(200,store.edit_metadata(rid,self.body()))
                 if method=="POST" and action in ("cancel","resume","reproduce"):
                     self.body()

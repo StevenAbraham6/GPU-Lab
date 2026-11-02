@@ -43,6 +43,21 @@ class StoreTests(unittest.TestCase):
         self.store.update(self.rid,status='running',pid=99999999,marker='oldboot:123')
         self.store.recover();run=self.store.get(self.rid)
         self.assertEqual(run['status'],'interrupted');self.assertEqual(len(run['results']),1)
+    def test_telemetry_overview_preserves_extremes_boundaries_and_raw_data(self):
+        for i in range(1000):
+            self.store.sample(self.rid, 'arithmetic' if i < 501 else 'matrix', i,
+                dict(power_w=999 if i==247 else 10, clock_mhz=1 if i==248 else 1000,
+                     utilization_pct=None if 600 <= i < 610 else 50, memory_used_mib=i))
+        overview=self.store.telemetry_overview(self.rid,buckets=10)
+        self.assertLess(len(overview),100)
+        by_ts={row['ts']:row for row in overview}
+        for stamp in (0,247,248,500,501,599,600,609,610,999):self.assertIn(stamp,by_ts)
+        self.assertEqual(by_ts[247]['power_w'],999)
+        self.assertEqual(len(self.store.get(self.rid)['telemetry']),1000)
+        self.assertEqual(self.store.telemetry_nearest(self.rid,247.2,'power_w')['power_w'],999)
+        self.assertEqual(self.store.telemetry_nearest(self.rid,604,'utilization_pct')['ts'],599)
+        with self.assertRaises(ValueError):self.store.telemetry_nearest(self.rid,0,'not_a_metric')
+
     def test_path_traversal_rejected(self):
         with self.assertRaises(ValueError):self.store.directory('../outside')
     def test_measurement_version_survives_import(self):
