@@ -78,7 +78,7 @@ class Store:
         with self.connect() as db:
             db.execute("INSERT INTO audit(run_id,at,data) VALUES(?,?,?)", (rid, now(), json.dumps(data)))
 
-    def get(self, rid, samples=True):
+    def get(self, rid, samples=True, summary=False, results=True):
         self.directory(rid)
         with self.connect() as db:
             row = db.execute("SELECT * FROM runs WHERE id=?", (rid,)).fetchone()
@@ -88,7 +88,25 @@ class Store:
             for key in ("metadata", "snapshot", "config", "tests", "gpu"):
                 value[key] = json.loads(value[key])
             value["simulated"] = bool(value["simulated"])
-            value["results"] = [json.loads(r[0]) for r in db.execute("SELECT data FROM results WHERE run_id=? ORDER BY seq", (rid,))]
+            if not results:
+                value["results"] = []
+            elif summary:
+                # Return only the fields the overview needs. SQLite still reads the
+                # stored JSON, but Python never materializes large series or intervals.
+                value["results"] = []
+                for result in db.execute("SELECT seq,test_id,json_extract(data,'$.status') FROM results WHERE run_id=? ORDER BY seq", (rid,)):
+                    cases = []
+                    query = """SELECT json_extract(c.value,'$.name'), json_extract(c.value,'$.status'),
+                                      json_extract(c.value,'$.settings'), json_extract(c.value,'$.metrics')
+                               FROM results r, json_each(r.data,'$.cases') c WHERE r.seq=?"""
+                    for case in db.execute(query, (result[0],)):
+                        item = {"name":case[0], "status":case[1]}
+                        if case[2] is not None: item["settings"] = json.loads(case[2])
+                        if case[3] is not None: item["metrics"] = json.loads(case[3])
+                        cases.append(item)
+                    value["results"].append(dict(test_id=result[1], status=result[2], cases=cases))
+            else:
+                value["results"] = [json.loads(r[0]) for r in db.execute("SELECT data FROM results WHERE run_id=? ORDER BY seq", (rid,))]
             value["audit"] = [dict(at=r[0], **json.loads(r[1])) for r in db.execute("SELECT at,data FROM audit WHERE run_id=? ORDER BY seq", (rid,))]
             value["telemetry"] = [dict(ts=r[0], test_id=r[1], **json.loads(r[2])) for r in db.execute("SELECT ts,test_id,data FROM telemetry WHERE run_id=? ORDER BY seq", (rid,))] if samples else []
         value.update(schema_version=SCHEMA_VERSION, app_version=value['snapshot'].get('app_version',__version__), report_app_version=__version__)

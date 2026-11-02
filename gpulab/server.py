@@ -122,11 +122,10 @@ class Handler(BaseHTTPRequestHandler):
             if match:
                 rid,action=match.groups();store.recover()
                 if method=="GET" and not action:
+                    if query.get("view") == ["overview"]:
+                        return self.send(200,store.get(rid,samples=False,results=False))
                     if query.get("view") == ["summary"]:
-                        run=store.get(rid,samples=False)
-                        for result in run["results"]:
-                            result["cases"]=[{key:case[key] for key in ("name","status","settings","metrics") if key in case} for case in result.get("cases",[])]
-                        return self.send(200,run)
+                        return self.send(200,store.get(rid,samples=False,summary=True))
                     return self.send(200,store.get(rid))
                 if method=="GET" and action=="results":return self.send(200,store.get(rid,samples=False)["results"])
                 if method=="GET" and action=="telemetry":return self.send(200,store.telemetry_overview(rid))

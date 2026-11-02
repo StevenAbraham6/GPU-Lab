@@ -43,6 +43,30 @@ class StoreTests(unittest.TestCase):
         self.store.update(self.rid,status='running',pid=99999999,marker='oldboot:123')
         self.store.recover();run=self.store.get(self.rid)
         self.assertEqual(run['status'],'interrupted');self.assertEqual(len(run['results']),1)
+    def test_summary_selects_overview_fields_without_decoding_full_result(self):
+        from unittest.mock import patch
+        import json
+        result=demo_result('matrix',config())
+        result['cases'][0]['series']=[{'elapsed':i,'throughput':i} for i in range(1000)]
+        result['cases'][0]['intervals']=[{'start':i,'end':i+1} for i in range(1000)]
+        self.store.result(self.rid,result)
+        original=json.loads
+        def reject_full_result(value, *args, **kwargs):
+            if isinstance(value,str) and '"series"' in value:
+                raise AssertionError('summary decoded a full result')
+            return original(value,*args,**kwargs)
+        with patch('gpulab.store.json.loads',side_effect=reject_full_result):
+            summary=self.store.get(self.rid,samples=False,summary=True)
+        actual=summary['results'][0]
+        self.assertEqual(actual['test_id'],result['test_id'])
+        self.assertEqual(actual['status'],result['status'])
+        for expected, case in zip(result['cases'],actual['cases']):
+            self.assertEqual(case['name'],expected['name'])
+            self.assertEqual(case['metrics'],expected['metrics'])
+            self.assertNotIn('series',case)
+            self.assertNotIn('intervals',case)
+        self.assertEqual(self.store.get(self.rid)['results'][0],result)
+
     def test_telemetry_overview_preserves_extremes_boundaries_and_raw_data(self):
         for i in range(1000):
             self.store.sample(self.rid, 'arithmetic' if i < 501 else 'matrix', i,
