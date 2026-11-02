@@ -119,6 +119,8 @@ The listener setting is a systemd drop-in that remains in place across browser u
 
 ### Browser updates and restarts
 
+In Settings, choose **Production (main)** or **Beta (dev)**, then select **Update to latest**. The selected channel takes effect after installation and will be used for future checks and updates. Switching channels can install an older commit when returning to production. Updates wait for active benchmarks, preserve benchmark history, and stop if the source checkout contains local changes or uninstalled local commits.
+
 Open **Settings** for **Check for updates**, **Update to latest**, **Restart service**, and the latest maintenance log. New service installations include this setup. For an existing installation, deploy this source revision to the server and run once from its Git checkout:
 
 ```bash

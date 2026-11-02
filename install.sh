@@ -133,14 +133,14 @@ if [[ "$video_build" == 1 && "$app_only" == 0 ]]; then
   bash "$source_dir/scripts/build-video.sh" "$GPU_LAB_PREFIX/tools"
 fi
 # Quote executable paths with Python rather than interpolating shell source.
-"$py" - "$GPU_LAB_PREFIX" "$GPU_LAB_DATA" "$GPU_LAB_BIN/gpu-lab" "$source_dir" "$service" "$extra" "${GPU_LAB_UPDATE_BRANCH:-main}" <<'PY'
+"$py" - "$GPU_LAB_PREFIX" "$GPU_LAB_DATA" "$GPU_LAB_BIN/gpu-lab" "$source_dir" "$service" "$extra" "${GPU_LAB_UPDATE_BRANCH:-}" <<'PY'
 import json,pathlib,shlex,subprocess,sys
 prefix,data,dest,source=map(lambda value:pathlib.Path(value).expanduser().absolute(),sys.argv[1:5])
 deployment=prefix/'deployment.json'
 previous=json.loads(deployment.read_text()) if deployment.exists() else {}
 commit=subprocess.run(['git','-C',str(source),'rev-parse','HEAD'],capture_output=True,text=True)
 configuration=dict(source=str(source.resolve()),python=str(prefix/'venv/bin/python'),updater_python=str(pathlib.Path(sys._base_executable).resolve()),
-                   branch=sys.argv[7],service='gpu-lab.service' if sys.argv[5]=='1' else previous.get('service'),
+                   branch=sys.argv[7] or previous.get('branch', 'main'),service='gpu-lab.service' if sys.argv[5]=='1' else previous.get('service'),
                    opencl=bool(sys.argv[6]),installed_commit=commit.stdout.strip() if commit.returncode==0 else None,installation_uncertain=False)
 deployment.write_text(json.dumps(configuration,indent=2)+'\n');deployment.chmod(0o600)
 q=shlex.quote
