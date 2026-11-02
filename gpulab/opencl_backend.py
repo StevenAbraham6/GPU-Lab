@@ -76,9 +76,6 @@ class OpenCL:
 
     def arithmetic(self, cfg):
         cases = []
-        for kind in ("fp32", "int32"):
-            fn, work, buf, settings = self.arithmetic_job(kind)
-            cases.append(timed_loop(fn, cfg, work, "GFLOP/s" if kind=="fp32" else "GOP/s", kind.upper(), settings))
         for chains in (4, 8, 16, 32):
             fn, work, buf, settings = self.arithmetic_sweep_job(chains)
             case = timed_loop(fn, cfg, work, "GFLOP/s", f"FP32 queued · {chains} accumulators", settings)

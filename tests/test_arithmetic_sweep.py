@@ -5,6 +5,7 @@ from unittest.mock import patch
 import numpy as np
 
 from gpulab.opencl_backend import OpenCL
+from gpulab.runner import efficiency, demo_result
 
 
 class ArithmeticSweepTests(unittest.TestCase):
@@ -55,10 +56,23 @@ class ArithmeticSweepTests(unittest.TestCase):
             return {'name': name, 'intervals': [{'dispatches': 3, 'wall_rate': 4}], 'metrics': []}
         with patch('gpulab.opencl_backend.timed_loop', side_effect=measure):
             cases = backend.arithmetic({})
-        self.assertEqual([case['name'] for case in cases[:2]], ['FP32', 'INT32'])
-        self.assertEqual(len(cases), 6)
-        for case in cases[2:]:
+        self.assertEqual([case['name'] for case in cases], [f'FP32 queued · {n} accumulators' for n in (4, 8, 16, 32)])
+        for case in cases:
             self.assertEqual(case['intervals'][0]['batches'], 3)
             self.assertEqual(case['intervals'][0]['dispatches'], 24)
             self.assertEqual(case['metrics'][0]['name'], 'elapsed throughput')
             self.assertEqual(case['metrics'][0]['value'], 4)
+
+    def test_arithmetic_records_power_without_energy_metrics(self):
+        class Store:
+            def samples(self, *args):
+                return [dict(ts=n, power_w=100, power_scope='GPU') for n in range(5)]
+        case = {'intervals': [{'start': 0, 'end': 4, 'work': 400, 'work_unit': 'GFLOP'}], 'metrics': []}
+        efficiency(Store(), 'run', {'test_id': 'arithmetic', 'cases': [case]}, {'sample_interval': 1})
+        self.assertEqual([(m['name'], m['value']) for m in case['metrics']], [('average GPU power', 100)])
+
+    def test_demo_arithmetic_matches_the_four_fp32_levels(self):
+        cases = demo_result('arithmetic', {'profile': 'quick'})['cases']
+        self.assertEqual([c['settings']['independent_accumulators'] for c in cases], [4, 8, 16, 32])
+        self.assertTrue(all('INT32' not in c['name'] for c in cases))
+        self.assertTrue(all('work per joule' not in [m['name'] for m in c['metrics']] for c in cases))
