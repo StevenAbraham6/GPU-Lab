@@ -12,7 +12,7 @@ From a copy of this repository on an Ubuntu GPU server:
 bash install.sh --backend auto --service
 ```
 
-This installs OS userspace prerequisites, a private Python environment, the CLI/web application, separate CUDA/ROCm PyTorch environments for detected vendors, and a private FFmpeg + VMAF video toolchain. It also starts the loopback web UI as a user systemd service. There is no Node.js build step, external database or cloud account.
+This installs OS userspace prerequisites, a private Python environment, the CLI/web application, separate CUDA/ROCm PyTorch environments for detected vendors, and a private FFmpeg + VMAF video toolchain. It also starts the web UI as a user systemd service on port 8080 across IPv4 interfaces, without login by default. There is no Node.js build step, external database or cloud account.
 
 If you have the release archive instead, this is one shell command after copying it to the server:
 
@@ -72,25 +72,21 @@ Existing environments can be used via `GPU_LAB_TORCH_NVIDIA=/path/to/python` and
 
 ### Web UI and remote access
 
+The installed systemd service listens on port 8080 across IPv4 interfaces without login by default. From another computer on the same trusted network, open `http://SERVER_IP:8080` using the server's IP address. The network must permit the connection to port 8080. The UI can launch benchmarks and manage saved results, so keep access on the intended internal network.
+
+The standalone command below still listens on loopback by default:
+
 ```bash
 gpu-lab serve
 ```
 
-Open **http://127.0.0.1:8080** on the server. From a laptop, create a tunnel:
+Open **http://127.0.0.1:8080** on the server. From a laptop using SSH instead of direct network access, create a tunnel:
 
 ```bash
 ssh -L 8080:127.0.0.1:8080 ubuntu@YOUR_SERVER
 ```
 
-Then open http://127.0.0.1:8080 on the laptop. The UI provides Overview, New benchmark, Run library and Compare runs. It has no analytics or third-party web assets.
-
-To bind outside loopback, supply a token; an unauthenticated non-loopback listener is rejected:
-
-```bash
-GPU_LAB_TOKEN='YOUR_LONG_RANDOM_TOKEN' gpu-lab serve --host 0.0.0.0 --port 8080
-```
-
-Use HTTPS through a reverse proxy or an SSH tunnel on untrusted networks. The UI accepts the token through a login form and uses an HttpOnly SameSite cookie; API clients can use `Authorization: Bearer ...`. Tokens are not placed in URLs. Browser mutations reject foreign origins. This is a single trusted-operator workspace, not a multi-tenant hosted service.
+Then open http://127.0.0.1:8080 on the laptop. The UI provides Overview, New benchmark, Run library and Compare runs. It has no analytics or third-party web assets. This is a single trusted-operator workspace, not a multi-tenant hosted service.
 
 ### Persistent service
 
@@ -105,21 +101,21 @@ systemctl --user restart gpu-lab
 
 The unit uses `KillMode=process`: restarting the UI does not intentionally kill detached benchmark workers. A reboot cannot preserve an in-flight GPU operation; the run will be marked interrupted and completed test records remain available.
 
-#### Direct network access
+#### Network listener configuration
 
-On the server, from a checkout containing this version, enable the authenticated network listener:
+The default `--service` installation listens on all IPv4 interfaces on port 8080 without authentication. From an authorized internal network, visit `http://SERVER_IP:8080`. This does not configure public IP forwarding or external firewall rules.
+
+To require a login token instead, run this from the server checkout:
 
 ```bash
 bash install.sh --update-app --network-service
 ```
 
-Run this as the Linux user that owns GPU Lab, using the same `GPU_LAB_PREFIX`, `GPU_LAB_HOME`, and `GPU_LAB_BIN` overrides as the original installation. The installer creates a random access token in `~/.local/share/gpu-lab-app/network-token` (or `$GPU_LAB_PREFIX/network-token`), readable by its owner, and retains an existing token on subsequent runs. Read the file on the server and enter its contents at the browser login. Treat the token as a password.
+Run this as the Linux user that owns GPU Lab, using the same `GPU_LAB_PREFIX`, `GPU_LAB_HOME`, and `GPU_LAB_BIN` overrides as the original installation. The installer creates a random access token in `~/.local/share/gpu-lab-app/network-token` (or `$GPU_LAB_PREFIX/network-token`), readable by its owner, and retains an existing token on subsequent runs. Read the file on the server and enter its contents at the browser login.
 
-The service listens on all IPv4 interfaces on port 8080. From an authorized network, visit `http://SERVER_IP:8080`. Allow the port through the server firewall and any upstream firewall only for trusted VPN clients or other explicitly authorized addresses; VPN routing, public IP forwarding, and firewall rules depend on the environment and are not configured by the installer. Plain HTTP does not encrypt the token or results: use a VPN protecting the full path, or an HTTPS reverse proxy for access over untrusted networks. This single-operator service is not designed for unrestricted public exposure.
+The authenticated service also listens on all IPv4 interfaces on port 8080. The installer does not configure public IP forwarding or external firewall rules.
 
-The network setting is a systemd drop-in that remains in place when the installer rewrites the base service, and browser updates leave it intact. Maintenance verifies the restarted service through loopback, which remains reachable when listening on `0.0.0.0`. To return to loopback-only access, remove `~/.config/systemd/user/gpu-lab.service.d/network.conf`, then run `systemctl --user daemon-reload` and `systemctl --user restart gpu-lab`.
-
-For an unauthenticated listener, run `bash install.sh --update-app --open-network-service` instead. Anyone who can reach port 8080 can use the application, view results, launch benchmarks, and update or restart it. Restrict network access to trusted clients with the VPN and firewall. This choice also persists across browser updates and service reinstalls; run `--network-service` to restore token authentication.
+The listener setting is a systemd drop-in that remains in place across browser updates. Re-running the installer with `--service` restores the default unauthenticated network listener; `--network-service` switches it to token authentication. Maintenance verifies the service through loopback, which remains reachable when it listens on `0.0.0.0`.
 
 ### Browser updates and restarts
 
