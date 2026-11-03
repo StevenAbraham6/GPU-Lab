@@ -31,6 +31,9 @@ def main():
         if test=="matrix":
             from .torch_backend import matrix
             result["cases"]=matrix(spec["gpu"],spec["config"])
+        elif test=="ai":
+            from .ai_backend import inference
+            result["cases"]=inference(spec["gpu"],spec["config"])
         elif test=="video":
             from .video import video
             result["cases"]=video(spec["gpu"],spec["config"],spec["directory"])

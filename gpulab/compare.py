@@ -27,6 +27,7 @@ def comparison(a,b):
         if a.get("app_version")!=b.get("app_version"):reasons.append("Different suite versions")
         # Workload settings must match; vendor/version/preset fields are contextual differences.
         ignored={"torch_version","library","encoder","preset","mode_note"}
+        if left['test_id']=='ai':ignored.discard('torch_version')
         ls={k:v for k,v in left["settings"].items() if k not in ignored}
         rs={k:v for k,v in right["settings"].items() if k not in ignored} if right else {}
         if right and ls!=rs:reasons.append("Workload settings differ")

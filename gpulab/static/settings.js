@@ -1,5 +1,5 @@
 'use strict';
-const maintenance={timer:null,pending:null,offline:false};
+const maintenance={timer:null,pending:null,offline:false,channel:null};
 try{maintenance.pending=JSON.parse(sessionStorage.getItem('gpu-lab-maintenance')||'null')}catch(error){/* Storage may be unavailable. */}
 
 function saveMaintenance(value){
@@ -40,14 +40,19 @@ function renderMaintenanceOffline(){
 function renderSettings(data){
   const op=data.operation,short=value=>value?value.slice(0,12):'Not recorded';
   const disabled=data.busy||!data.supported?'disabled':'';
-  const checkText=data.update_available?'New code is available.':op.checked_at?'Your installed code matches the last update check.':'Check GitHub to see whether newer code is available.';
+  const channel=maintenance.channel||(data.branch==='dev'?'beta':'production');
+  const branch=channel==='beta'?'dev':'main';
+  const checked=op.checked_at&&op.checked_branch===branch;
+  const available=checked&&op.available_commit!==data.installed_commit;
+  const checkText=available?'Different code is available on the selected channel.':checked?'The selected channel matches the installed code.':'Check GitHub for the selected channel.';
   $('#app').innerHTML=head('SETTINGS','Keep your lab up to date.','Check GitHub, update the application, and restart the service from this browser.')+
     `${!data.supported?notice('One-time server setup needed',data.unavailable_reason,'warn'):''}`+
     `${data.installation_uncertain?notice('Installation needs attention','The last package installation failed. The recorded commit is the last known version; inspect the log and retry the update or recover from the terminal.','warn'):''}`+
-    `<section class="panel"><div class="panel-head"><div><div class="section-kicker">SOFTWARE UPDATE</div><h2>GPU Lab ${esc(data.version)}</h2><p>Updates from ${esc(data.branch)} on GitHub</p></div><span class="pill ${data.update_available?'active':'neutral'}">${data.update_available?'Update available':'Application'}</span></div><div class="panel-body"><div class="kv"><span>Installed commit</span><code>${esc(short(data.installed_commit))}</code></div><div class="kv"><span>Latest checked commit</span><code>${esc(short(op.available_commit))}</code></div><div class="kv"><span>Last checked</span><span>${op.checked_at?esc(date(op.checked_at)):'Not checked yet'}</span></div><p>${esc(checkText)}</p><div class="actions"><button data-maintenance="check" ${disabled}>Check for updates</button><button class="primary" data-maintenance="update" ${disabled}>Update to latest</button></div><p class="inline-note">Updates wait for active benchmarks to finish. The app then briefly goes offline while the new version installs and the service restarts. Benchmark history and GPU runtimes are preserved.</p></div></section>`+
+    `<section class="panel"><div class="panel-head"><div><div class="section-kicker">SOFTWARE UPDATE</div><h2>GPU Lab ${esc(data.version)}</h2><p>Installed channel: ${data.branch==='dev'?'Beta':'Production'} (${esc(data.branch)})</p></div><span class="pill ${available?'active':'neutral'}">${available?'Update available':'Application'}</span></div><div class="panel-body"><label for="update-channel">Software channel</label> <select id="update-channel" ${disabled}><option value="production" ${channel==='production'?'selected':''}>Production (main)</option><option value="beta" ${channel==='beta'?'selected':''}>Beta (dev)</option></select><p class="inline-note">Select a channel, then choose Update to latest to install it.</p><div class="kv"><span>Installed commit</span><code>${esc(short(data.installed_commit))}</code></div><div class="kv"><span>Latest checked commit</span><code>${esc(short(checked?op.available_commit:null))}</code></div><div class="kv"><span>Last checked</span><span>${checked?esc(date(op.checked_at)):'Not checked yet'}</span></div><p>${esc(checkText)}</p><div class="actions"><button data-maintenance="check" ${disabled}>Check for updates</button><button class="primary" data-maintenance="update" ${disabled}>Update to latest</button></div><p class="inline-note">Updates wait for active benchmarks to finish. The app then briefly goes offline while the new version installs and the service restarts. Benchmark history and GPU runtimes are preserved.</p></div></section>`+
     `<section class="panel"><div class="panel-head"><div><div class="section-kicker">SERVICE</div><h2>Restart GPU Lab</h2><p>Restart the web service without downloading new code.</p></div><button data-maintenance="restart" ${disabled}>Restart service</button></div><div class="panel-body"><p class="inline-note">Restarts wait for active benchmarks. New launches pause during updates and restarts. A server access token may need to be entered again after reconnecting.</p></div></section>`+
     `<section class="panel"><div class="panel-head"><div><div class="section-kicker">MAINTENANCE ACTIVITY</div><h2>${esc(op.state.replaceAll('_',' '))}</h2></div><button data-maintenance-refresh>Refresh status</button></div><div class="panel-body"><p role="status" aria-live="polite">${esc(op.message)}</p>${op.previous_commit?`<p class="inline-note">Previous source commit: <code>${esc(short(op.previous_commit))}</code></p>`:''}${op.backup?`<p class="inline-note">Database backup: <code>${esc(op.backup)}</code></p>`:''}<h3>Latest operation log</h3><pre class="maintenance-log" tabindex="0">${esc(data.log||'No log entries yet.')}</pre>${op.state==='failed'?notice('Maintenance failed','Review the log before retrying. If the app cannot start, terminal recovery may be required.','bad'):''}</div></section>`;
   $('#app').querySelectorAll('[data-maintenance]').forEach(button=>button.onclick=()=>startMaintenance(button.dataset.maintenance));
+  $('#update-channel').onchange=event=>{maintenance.channel=event.target.value;renderSettings(data)};
   $('[data-maintenance-refresh]').onclick=()=>settings().catch(error=>toast(error.message));
 }
 async function settings(){
@@ -66,7 +71,7 @@ async function startMaintenance(action){
     const health=await fetch('/api/health',{cache:'no-store'}).then(response=>response.json());
     // Save before POST: a restart can close the connection before its response arrives.
     saveMaintenance({id:null,instance:health.instance,started:Date.now()});
-    const op=await post('/settings/'+action);
+    const op=await post('/settings/'+action,action==='restart'?{}:{channel:maintenance.channel||($('#update-channel')?.value||'production')});
     saveMaintenance({id:op.id,instance:health.instance,started:Date.now()});
     maintenance.offline=false;
     maintenanceSchedule();

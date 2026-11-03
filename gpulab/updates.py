@@ -100,7 +100,7 @@ class Updates:
                     record.update(state="failed", message="The maintenance worker stopped unexpectedly. Review the update log before retrying.", updated=stamp())
                     write_json(self.status_path, record)
             reason = self.reason()
-            available = record.get("available_commit")
+            available = record.get("available_commit") if record.get("checked_branch", self.config.get("branch", "main")) == self.config.get("branch", "main") else None
             log = ""
             if record.get("id"):
                 path = self.root / record["id"] / "update.log"
@@ -114,9 +114,11 @@ class Updates:
                         update_available=bool(available and available != self.config.get("installed_commit")),
                         busy=record["state"] in BUSY, operation=record, log=redact(log))
 
-    def start(self, action):
+    def start(self, action, channel=None):
         if action not in ("check", "update", "restart"):
             raise ValueError("Unknown maintenance action")
+        if channel not in (None, "production", "beta"):
+            raise ValueError("Unknown software channel")
         with self.lock, (self.root / "request.lock").open("a+") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             # Reconcile a worker interrupted by a host reboot before accepting work.
@@ -130,12 +132,15 @@ class Updates:
             folder.mkdir(mode=0o700)
             worker = folder / "updater.py"
             shutil.copyfile(Path(__file__).with_name("updater.py"), worker)
-            record = {key: value for key, value in status["operation"].items() if key in ("available_commit", "checked_at")}
+            record = {key: value for key, value in status["operation"].items() if key in ("available_commit", "checked_at", "checked_branch")}
             record.update(id=identity, action=action, state="starting", message="Starting background maintenance.",
                           started=stamp(), updated=stamp(), started_unix=time.time(), unit="gpu-lab-maintenance-" + identity)
             job = dict(action=action, config_path=str(self.config_path), data=str(self.store.root.resolve()),
                        status_path=str(self.status_path.resolve()), log_path=str(folder.resolve() / "update.log"),
                        instance=self.instance, health_url=self.health_url)
+            if action in ("check", "update"):
+                job["branch"] = {"production": "main", "beta": "dev"}.get(channel, self.config.get("branch", "main"))
+                record["requested_branch"] = job["branch"]
             job_path = folder / "job.json"
             write_json(job_path, job)
             write_json(folder / "status.json", record)

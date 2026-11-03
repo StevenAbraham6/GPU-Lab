@@ -34,6 +34,10 @@ TESTS = [
          summary="Compute, memory and hardware video phases with time-series throughput.",
          method="Split the configured total soak duration across selected compute, memory and video phases. Check compute/memory outputs, record throughput and telemetry, compare early and late intervals. Video uses the first configured codec, resolution and mode, with preparation excluded and encode process boundaries included.",
          boundary="Wall time per interval, including checks; GPU power collected independently. User temperature ceiling stops the run if exposed sensor reaches it."),
+    dict(id="ai", group="ai", title="AI inference stability", backend="torch",
+         summary="Sustained local Llama 3.1 8B inference, speed and GPU health.",
+         method="Run fixed prompts with greedy generation on the selected GPU using local Llama 3.1 8B Instruct weights in FP16. Report generation speed, time to first token, early and late speed, failures and GPU health. Model files and workload are fingerprinted for comparison.",
+         boundary="Model loading and warm-up excluded. Full requests finish after the soak deadline. No CPU model offload or network access."),
     dict(id="integrity", group="integrity", title="VRAM integrity", backend="opencl",
          summary="Address-dependent pattern verification across a configurable memory allocation.",
          method="Allocate bounded VRAM; write zero, all-one, alternating and address-hashed patterns in multiple passes, then GPU-verify every word and read mismatch counts. Host spot-checks verify the verifier. Cannot allocate driver-reserved memory; this is not a hardware certification or an ECC scrub.",
@@ -54,10 +58,12 @@ def config(profile="quick", **overrides):
                  codecs=["h264", "hevc", "av1"], resolutions=["1920x1080", "3840x2160"],
                  video_modes=["quality", "low-latency"], reference=None, max_temp=90.0,
                  memory_fraction=0.5, integrity_passes=2, timeout=7200,
-                 concurrency_media=True, soak_workloads=["compute","memory","video"])
+                 concurrency_media=True, soak_workloads=["compute","memory","video"], ai_model_path=None)
     unknown=set(overrides)-set(value)-{'allow_partial'}
     if unknown:raise ValueError('Unknown configuration fields: '+', '.join(sorted(unknown)))
     value.update({k: v for k, v in overrides.items() if v is not None})
+    if value['ai_model_path'] is not None and (not isinstance(value['ai_model_path'], str) or not value['ai_model_path'].strip()):
+        raise ValueError('ai_model_path must be a nonempty local directory path')
     if not isinstance(value['memory_fraction'],(int,float)) or isinstance(value['memory_fraction'],bool) or not (0.05 <= value["memory_fraction"] <= 0.8):
         raise ValueError("memory_fraction must be 0.05–0.8")
     for key, low, high in [("duration", .1, 600), ("warmup", 0, 60), ("repeats", 1, 20),

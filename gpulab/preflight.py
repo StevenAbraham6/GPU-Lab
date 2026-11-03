@@ -31,6 +31,17 @@ def check(gpu, tests, cfg, root, execute=True):
         elif execute:
             result = probe("opencl-execute", gpu)
             add("OpenCL execution & correctness", "blocked" if result.get("error") else "ready", result.get("error") or "GPU kernel output validated", cl_tests)
+    if "ai" in tests:
+        path = cfg.get('ai_model_path')
+        model = Path(path).expanduser() if path else None
+        valid = bool(model and model.is_dir() and (model/'config.json').is_file() and
+                     any(model.glob('*.safetensors')) and (model/'tokenizer.json').is_file())
+        add('Llama model files', 'ready' if valid else 'blocked',
+            str(model.resolve()) if valid else 'Set ai_model_path to a local Llama 3.1 8B Instruct directory containing config.json, tokenizer.json and safetensors weights.', ['ai'])
+        if execute:
+            result = probe('ai', gpu, root)
+            add('AI GPU backend', 'blocked' if result.get('error') else 'ready',
+                result.get('error') or f"GPU {result['device']}; PyTorch {result['torch_version']}; Transformers {result['transformers_version']}", ['ai'])
     if "matrix" in tests:
         result = probe("torch", gpu, root) if execute else {}
         if result.get("error"):

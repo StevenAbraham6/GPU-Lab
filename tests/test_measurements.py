@@ -31,7 +31,7 @@ class ConfigurationTests(unittest.TestCase):
             with self.subTest(overrides=overrides), self.assertRaises(ValueError):config(**overrides)
 
     def test_removed_algorithms_are_not_part_of_suite(self):
-        self.assertEqual(len(select_tests(['all'])),9)
+        self.assertEqual(len(select_tests(['all'])),10)
         self.assertNotIn('algorithms',select_tests(['all']))
         self.assertEqual(select_tests(['compute']),['arithmetic','matrix'])
 

@@ -95,8 +95,8 @@ class Handler(BaseHTTPRequestHandler):
             store=self.server.store
             if path=="/api/settings" and method=="GET":return self.send(200,self.server.updates.status())
             if path in ("/api/settings/check","/api/settings/update","/api/settings/restart") and method=="POST":
-                self.body()
-                return self.send(202,self.server.updates.start(path.rsplit("/",1)[1]))
+                body=self.body()
+                return self.send(202,self.server.updates.start(path.rsplit("/",1)[1], body.get("channel")))
             if path=="/api/catalog" and method=="GET":return self.send(200,dict(tests=TESTS,profiles=PROFILES,defaults=config()))
             if path=="/api/devices" and method=="GET":return self.send(200,self.server.devices())
             if path=="/api/runs" and method=="GET":return self.send(200,store.list())

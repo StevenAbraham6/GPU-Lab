@@ -15,8 +15,12 @@ def read(path, default=None):
         return default
 
 def normalize_bus(value):
-    if not value:
+    # PyTorch ROCm may expose pci_bus_id as an integer instead of a BDF
+    # string. That value cannot be normalized as text; callers can then use
+    # the HIP runtime lookup or the unambiguous device-name fallback.
+    if not isinstance(value, str) or not value.strip():
         return None
+    value = value.strip()
     parts = value.lower().split(":")
     if len(parts) == 3:
         return f"{int(parts[0], 16):04x}:{parts[1]}:{parts[2]}"
@@ -29,7 +33,7 @@ def backend_python(gpu, root=None):
     return override or (str(candidate) if candidate.exists() else sys.executable)
 
 def probe(kind, gpu=None, root=None, timeout=45):
-    python = backend_python(gpu or {}, root) if kind == "torch" else sys.executable
+    python = backend_python(gpu or {}, root) if kind in ("torch", "ai") else sys.executable
     args = [python, str(Path(__file__).with_name('backend_entry.py')), "probe", kind]
     if gpu:
         args += [json.dumps(gpu)]

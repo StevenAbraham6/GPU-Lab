@@ -47,7 +47,7 @@ def clean_head(source):
     return git(source, "rev-parse", "HEAD")
 
 
-def fetch_target(config):
+def fetch_target(config, allow_switch=False):
     source = config["source"]
     branch = config["branch"]
     git(source, "check-ref-format", "--branch", branch)
@@ -55,10 +55,11 @@ def fetch_target(config):
     target = git(source, "rev-parse", "FETCH_HEAD")
     head = git(source, "rev-parse", "HEAD")
     # Validate before stopping the app; merge --ff-only is also enforced later.
-    try:
-        git(source, "merge-base", "--is-ancestor", head, target)
-    except RuntimeError as error:
-        raise RuntimeError("The server checkout cannot fast-forward to the configured GitHub branch. Resolve local/divergent history in the terminal before updating.") from error
+    if not allow_switch:
+        try:
+            git(source, "merge-base", "--is-ancestor", head, target)
+        except RuntimeError as error:
+            raise RuntimeError("The server checkout cannot fast-forward to the configured GitHub branch. Resolve local/divergent history in the terminal before updating.") from error
     return target
 
 
@@ -150,24 +151,39 @@ class Worker:
         try:
             action = self.job["action"]
             target = self.config.get("installed_commit")
+            branch = self.job.get("branch", self.config.get("branch", "main"))
+            if branch not in ("main", "dev") and "branch" in self.job:
+                raise ValueError("Unknown software branch")
+            switching = branch != self.config.get("branch", "main")
             if action in ("check", "update"):
-                self.phase("checking", "Checking GitHub for the latest code.")
+                self.phase("checking", f"Checking GitHub branch {branch} for the latest code.")
                 if action == "update":
-                    clean_head(self.config["source"])
-                target = fetch_target(self.config)
-                self.record.update(available_commit=target, checked_at=stamp())
+                    head = clean_head(self.config["source"])
+                    if switching and head != self.config.get("installed_commit") and not self.config.get("installation_uncertain"):
+                        raise RuntimeError("The checkout differs from the installed version. Resolve local commits in the terminal before switching channels.")
+                target = fetch_target({**self.config, "branch": branch}, allow_switch=switching)
+                self.record.update(available_commit=target, checked_at=stamp(), checked_branch=branch)
                 if action == "check":
                     self.phase("completed", "Update check complete.")
                     return
-                if target == self.config.get("installed_commit") and not self.config.get("installation_uncertain"):
+                if target == self.config.get("installed_commit") and not switching and not self.config.get("installation_uncertain"):
                     self.phase("completed", "GPU Lab is already up to date.")
                     return
             self.wait_for_runs()
             if action == "update":
                 previous = clean_head(self.config["source"])
+                if switching and previous != self.config.get("installed_commit") and not (self.config.get("installation_uncertain") and previous == target):
+                    raise RuntimeError("The checkout differs from the installed version. Resolve local commits in the terminal before switching channels.")
                 self.phase("downloading", "Applying the downloaded code.", previous_commit=previous, target_commit=target, active_runs=0)
+                # Record recovery state before changing the checkout, including if
+                # the worker or host stops before installation begins.
+                self.config["installation_uncertain"] = True
+                write_json(self.config_path, self.config)
                 # FETCH_HEAD may have changed outside the app; use the exact checked SHA.
-                git(self.config["source"], "merge", "--ff-only", target)
+                if switching:
+                    git(self.config["source"], "switch", "--detach", target)
+                else:
+                    git(self.config["source"], "merge", "--ff-only", target)
             self.phase("stopping", "Stopping GPU Lab. The browser will reconnect automatically.")
             # Also attempt a start if stop times out after systemd accepted the request.
             stopped = True
@@ -179,7 +195,7 @@ class Worker:
                 installing = True
                 package = self.config["source"] + ("[opencl]" if self.config.get("opencl") else "")
                 self.command([self.config["python"], "-m", "pip", "install", "--upgrade", "--upgrade-strategy", "only-if-needed", package], timeout=900)
-                self.config.update(installed_commit=target, installation_uncertain=False)
+                self.config.update(installed_commit=target, branch=branch, installation_uncertain=False)
                 write_json(self.config_path, self.config)
                 installing = False
             self.phase("starting_service", "Starting GPU Lab.")

@@ -103,6 +103,14 @@ def main():
             result = opencl_probe()
         elif kind == "torch":
             result = torch_probe(json.loads(sys.argv[2]))
+        elif kind == "ai":
+            import transformers
+            import safetensors
+            torch, rt, dev = torch_device(json.loads(sys.argv[2]))
+            rt.set_device(dev)
+            a = torch.ones(1, device=dev, dtype=torch.float16)
+            rt.synchronize()
+            result = dict(device=dev, torch_version=torch.__version__, transformers_version=transformers.__version__)
         elif kind == "opencl-execute":
             from .opencl_backend import OpenCL
             cl = OpenCL(json.loads(sys.argv[2]))

@@ -109,11 +109,13 @@ def demo_result(test,cfg):
               "video":[("H264 · 1080p encode",440,"frames/s","higher"),("HEVC · 4K encode",110,"frames/s","higher")],
               "concurrency":[("2 concurrent jobs",16800,"GFLOP/s","higher")],
               "stability":[("sustained FP32",12300,"GFLOP/s","higher")],
+              "ai":[("Llama 3.1 8B inference",42,"tokens/s","higher")],
               "integrity":[("VRAM mismatches",0,"errors","lower")]}
     for name,value,unit,direction in examples[test]:
         metrics=[metric("throughput" if direction=="higher" else "latency" if unit in ("µs","ns/access") else "mismatches",value,unit,direction)]
         if direction=="higher":metrics += [metric("average GPU power",100,"W","context"),metric("work per joule",value/100,unit.replace("/s","/J"),"higher")]
         if test=="video":metrics += [metric("VMAF",94.2,"score"),metric("output bitrate",8,"Mbit/s","context")]
+        if test=="ai":metrics += [metric('time to first token',.5,'s','lower'),metric('early output speed',43,'tokens/s','higher'),metric('late output speed',41,'tokens/s','higher'),metric('failed requests',0,'requests','lower'),metric('peak GPU temperature',70,'°C','context'),metric('peak GPU VRAM usage',18000,'MiB','context')]
         cases.append(dict(name=name,status="passed",settings={"fixture":"synthetic-v1","profile":cfg["profile"]},metrics=metrics,intervals=[],
                           power=dict(covered=True,power_scope="SIMULATED",average_power_w=100),note="SIMULATED: not a GPU measurement"))
     return dict(test_id=test,status="passed",started=now(),finished=now(),cases=cases,simulated=True)
@@ -177,7 +179,7 @@ def work(store,rid):
             collector.test_id=test;collector.take()
             folder=store.directory(rid);spec=folder/(test+"-spec.json");out=folder/(test+"-raw.json")
             atomic_json(spec,dict(test_id=test,gpu=gpu,config=cfg,directory=str(folder/"video")))
-            python=backend_python(gpu,store.root) if test=="matrix" else sys.executable
+            python=backend_python(gpu,store.root) if test in ("matrix","ai") else sys.executable
             with (folder/(test+".log")).open("ab") as log:
                 env=os.environ.copy();env['GPU_LAB_PARENT_PID']=str(os.getpid())
                 child=subprocess.Popen([python,str(Path(__file__).with_name('backend_entry.py')),"bench",str(spec),str(out)],stdin=subprocess.DEVNULL,stdout=log,stderr=subprocess.STDOUT,start_new_session=True,env=env)
@@ -197,6 +199,14 @@ def work(store,rid):
                 result=dict(test_id=test,status="error",reason=f"Benchmark process exited {child.returncode}; inspect {test}.log",cases=[])
             else:
                 result=json.loads(out.read_text());result=efficiency(store,rid,result,cfg)
+                if test=='ai':
+                    for case in result.get('cases',[]):
+                        window=case.get('measurement_window')
+                        if window:
+                            readings=store.samples(rid,window['start'],window['end'])
+                            for key,label,unit in [('temperature_c','peak GPU temperature','°C'),('memory_used_mib','peak GPU VRAM usage','MiB')]:
+                                values=[s[key] for s in readings if s.get(key) is not None]
+                                if values:case['metrics'].append(metric(label,max(values),unit,'context'))
             store.result(rid,result)
             store.update(rid,current_test_started_at=None)
             child=None

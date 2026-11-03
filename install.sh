@@ -19,9 +19,9 @@ usage() {
 GPU Lab installer
   bash install.sh [--backend auto|nvidia|amd|both|none] [--service]
                   [--app-only] [--update-app] [--skip-video-build] [--no-system-packages]
-  --service             Start the UI as a persistent user systemd service.
-  --network-service     Configure the service for authenticated network access (implies --service).
-  --open-network-service Configure network access without a token (implies --service).
+  --service             Start the UI on port 8080 on all IPv4 interfaces, without login.
+  --network-service     Start the UI with token-protected network access (implies --service).
+  --open-network-service Alias for the default unauthenticated network service.
   --app-only            UI/reports only; no GPU runtimes or video compilation.
   --update-app          Update only the app and browser-update setup; keep GPU runtimes/tools.
   --skip-video-build    Use distribution FFmpeg (VMAF may be unavailable).
@@ -133,14 +133,14 @@ if [[ "$video_build" == 1 && "$app_only" == 0 ]]; then
   bash "$source_dir/scripts/build-video.sh" "$GPU_LAB_PREFIX/tools"
 fi
 # Quote executable paths with Python rather than interpolating shell source.
-"$py" - "$GPU_LAB_PREFIX" "$GPU_LAB_DATA" "$GPU_LAB_BIN/gpu-lab" "$source_dir" "$service" "$extra" "${GPU_LAB_UPDATE_BRANCH:-main}" <<'PY'
+"$py" - "$GPU_LAB_PREFIX" "$GPU_LAB_DATA" "$GPU_LAB_BIN/gpu-lab" "$source_dir" "$service" "$extra" "${GPU_LAB_UPDATE_BRANCH:-}" <<'PY'
 import json,pathlib,shlex,subprocess,sys
 prefix,data,dest,source=map(lambda value:pathlib.Path(value).expanduser().absolute(),sys.argv[1:5])
 deployment=prefix/'deployment.json'
 previous=json.loads(deployment.read_text()) if deployment.exists() else {}
 commit=subprocess.run(['git','-C',str(source),'rev-parse','HEAD'],capture_output=True,text=True)
 configuration=dict(source=str(source.resolve()),python=str(prefix/'venv/bin/python'),updater_python=str(pathlib.Path(sys._base_executable).resolve()),
-                   branch=sys.argv[7],service='gpu-lab.service' if sys.argv[5]=='1' else previous.get('service'),
+                   branch=sys.argv[7] or previous.get('branch', 'main'),service='gpu-lab.service' if sys.argv[5]=='1' else previous.get('service'),
                    opencl=bool(sys.argv[6]),installed_commit=commit.stdout.strip() if commit.returncode==0 else None,installation_uncertain=False)
 deployment.write_text(json.dumps(configuration,indent=2)+'\n');deployment.chmod(0o600)
 q=shlex.quote
@@ -159,7 +159,7 @@ if [[ "$service" == 1 ]]; then
 from pathlib import Path
 import sys
 exe=sys.argv[2].replace('\\','\\\\').replace('"','\\"').replace('%','%%')
-Path(sys.argv[1]).write_text('[Unit]\nDescription=GPU Lab web workspace\nAfter=network.target\n\n[Service]\nType=simple\nExecStart="'+exe+'" serve --host 127.0.0.1 --port 8080\nRestart=on-failure\nRestartSec=3\nKillMode=process\n\n[Install]\nWantedBy=default.target\n')
+Path(sys.argv[1]).write_text('[Unit]\nDescription=GPU Lab web workspace\nAfter=network.target\n\n[Service]\nType=simple\nExecStart="'+exe+'" serve --host 0.0.0.0 --port 8080 --open-access\nRestart=on-failure\nRestartSec=3\nKillMode=process\n\n[Install]\nWantedBy=default.target\n')
 PY
   if [[ "$network_service" == 1 ]]; then
     mkdir -p "$HOME/.config/systemd/user/gpu-lab.service.d"
@@ -180,8 +180,9 @@ def quote(value):
 override.write_text('[Service]\nExecStart=\nExecStart=' + quote(exe) + ' serve --host 0.0.0.0 --port 8080 --token-file ' + quote(token) + '\n')
 PY
     printf 'Network access enabled on port 8080. Token file: %s/network-token\n' "$GPU_LAB_PREFIX"
-  fi
-  if [[ "$open_network_service" == 1 ]]; then
+  else
+    # Network access is the default for installed services. Reapply it on
+    # upgrades too, replacing any older listener mode unless auth was selected.
     mkdir -p "$HOME/.config/systemd/user/gpu-lab.service.d"
     "$py" - "$HOME/.config/systemd/user/gpu-lab.service.d/network.conf" "$GPU_LAB_BIN/gpu-lab" <<'PY'
 from pathlib import Path
@@ -200,7 +201,11 @@ fi
 printf '\nGPU Lab installed. Backend selection: %s\n' "$backend"
 printf 'Launch: %s serve\n' "$GPU_LAB_BIN/gpu-lab"
 printf 'CLI:    %s --help\n' "$GPU_LAB_BIN/gpu-lab"
-printf 'Open:   http://127.0.0.1:8080 (SSH tunnel for a remote server)\n'
+if [[ "$service" == 1 ]]; then
+  printf 'Open:   http://SERVER_IP:8080 from another computer on your network (no login required by default)\n'
+else
+  printf 'Open:   http://127.0.0.1:8080 after running: %s serve\n' "$GPU_LAB_BIN/gpu-lab"
+fi
 printf 'Data:   %s\n' "$GPU_LAB_DATA"
 printf '\nKernel drivers / OpenCL ICDs are host prerequisites, not replaced by this installer.\n'
 printf 'Run gpu-lab doctor --gpu GPU_ID to check this machine before benchmarking.\n'

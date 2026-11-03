@@ -68,6 +68,41 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual(self.record()["available_commit"], self.latest)
         self.assertEqual(self.record()["state"], "completed")
 
+    def test_switch_to_beta_and_back_to_production(self):
+        git(self.remote, "switch", "-c", "dev")
+        (self.remote / "app.txt").write_text("beta version\n")
+        git(self.remote, "commit", "-am", "Beta version")
+        beta = git(self.remote, "rev-parse", "HEAD")
+        worker = self.worker()
+        worker.job["branch"] = "dev"
+        with patch.object(worker, "command"), patch.object(worker, "verify"):
+            self.assertEqual(worker.run(), 0)
+        self.assertEqual(git(self.source, "rev-parse", "HEAD"), beta)
+        self.assertEqual(json.loads(self.config_path.read_text())["branch"], "dev")
+        worker = self.worker()
+        worker.job["branch"] = "main"
+        with patch.object(worker, "command"), patch.object(worker, "verify"):
+            self.assertEqual(worker.run(), 0)
+        self.assertEqual(git(self.source, "rev-parse", "HEAD"), self.latest)
+        self.assertEqual(json.loads(self.config_path.read_text())["branch"], "main")
+
+    def test_switch_rejects_uninstalled_local_commit(self):
+        git(self.source, "config", "user.name", "Local")
+        git(self.source, "config", "user.email", "local@example.test")
+        (self.source / "local.txt").write_text("local work")
+        git(self.source, "add", "local.txt")
+        git(self.source, "commit", "-m", "Local work")
+        worker = self.worker()
+        worker.job["branch"] = "dev"
+        with patch.object(worker, "service") as service:
+            self.assertEqual(worker.run(), 1)
+        service.assert_not_called()
+        self.assertIn("differs from the installed version", self.record()["message"])
+
+    def test_invalid_channel_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "channel"):
+            self.controller.start("update", "other")
+
     def test_update_waits_then_stops_backs_up_installs_starts_and_verifies(self):
         # Detached HEAD is produced by the bootstrap installer too.
         git(self.source, "checkout", "--detach", self.initial)
@@ -344,11 +379,15 @@ exec ''' + shlex.quote(sys.executable) + ''' "$@"
         config = override.read_text()
         self.assertIn("--host 0.0.0.0 --port 8080 --token-file", config)
         self.assertIn(str(token), config)
-        for option in ("--service", "--network-service"):
-            result = subprocess.run(args + [option], capture_output=True, text=True, timeout=30, env=env)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(override.read_text(), config)
-            self.assertEqual(token.read_text(), original)
+        result = subprocess.run(args + ["--service"], capture_output=True, text=True, timeout=30, env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        open_config = override.read_text()
+        self.assertIn("--host 0.0.0.0 --port 8080 --open-access", open_config)
+        self.assertNotIn("--token-file", open_config)
+        result = subprocess.run(args + ["--network-service"], capture_output=True, text=True, timeout=30, env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(override.read_text(), config)
+        self.assertEqual(token.read_text(), original)
         result = subprocess.run(args + ["--open-network-service"], capture_output=True, text=True, timeout=30, env=env)
         self.assertEqual(result.returncode, 0, result.stderr)
         open_config = override.read_text()
