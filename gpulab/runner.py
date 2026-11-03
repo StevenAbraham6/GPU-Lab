@@ -88,8 +88,9 @@ def efficiency(store,rid,result,cfg):
         case["power"]=dict(intervals=details,scope="GPU device telemetry only; never whole-server power")
         if intervals and len(energies)==len(intervals):
             energy=sum(energies);unit=intervals[0]["work_unit"]
-            case["metrics"].extend([
-                metric("average GPU power",energy/total_time,"W","context"),
+            case["metrics"].append(metric("average GPU power",energy/total_time,"W","context"))
+            if result.get("test_id") != "arithmetic":
+                case["metrics"].extend([
                 metric("energy for measured work",energy,"J","context"),
                 metric("work per joule",total_work/energy,unit+"/J","higher"),
                 metric("energy per work unit",energy/total_work,"J/"+unit,"lower")])
@@ -101,7 +102,7 @@ def efficiency(store,rid,result,cfg):
 def demo_result(test,cfg):
     """Explicit fixture for product evaluation. Never enters real hardware adapters."""
     cases=[]
-    examples={"arithmetic":[("FP32",12500,"GFLOP/s","higher"),("INT32",8100,"GOP/s","higher")],
+    examples={"arithmetic":[(f"FP32 queued · {n} accumulators",12500,"GFLOP/s","higher") for n in (4,8,16,32)],
               "matrix":[("FP32 · square",24.8,"TFLOP/s","higher"),("FP16 · square",102.4,"TFLOP/s","higher"),("INT8 · square",190,"TOP/s","higher")],
               "memory":[("copy · 64 MiB",320,"GB/s","higher"),("dependent access",180,"ns/access","lower")],
               "transfer":[("upload · 64 MiB",24.5,"GB/s","higher"),("download · 64 MiB",23.9,"GB/s","higher")],
@@ -113,10 +114,14 @@ def demo_result(test,cfg):
               "integrity":[("VRAM mismatches",0,"errors","lower")]}
     for name,value,unit,direction in examples[test]:
         metrics=[metric("throughput" if direction=="higher" else "latency" if unit in ("µs","ns/access") else "mismatches",value,unit,direction)]
-        if direction=="higher":metrics += [metric("average GPU power",100,"W","context"),metric("work per joule",value/100,unit.replace("/s","/J"),"higher")]
+        if direction=="higher":
+            metrics.append(metric("average GPU power",100,"W","context"))
+            if test!="arithmetic":metrics.append(metric("work per joule",value/100,unit.replace("/s","/J"),"higher"))
         if test=="video":metrics += [metric("VMAF",94.2,"score"),metric("output bitrate",8,"Mbit/s","context")]
         if test=="ai":metrics += [metric('time to first token',.5,'s','lower'),metric('early output speed',43,'tokens/s','higher'),metric('late output speed',41,'tokens/s','higher'),metric('failed requests',0,'requests','lower'),metric('peak GPU temperature',70,'°C','context'),metric('peak GPU VRAM usage',18000,'MiB','context')]
-        cases.append(dict(name=name,status="passed",settings={"fixture":"synthetic-v1","profile":cfg["profile"]},metrics=metrics,intervals=[],
+        settings={"fixture":"synthetic-v1","profile":cfg["profile"]}
+        if test=="arithmetic":settings["independent_accumulators"]=int(name.split('·')[1].split()[0])
+        cases.append(dict(name=name,status="passed",settings=settings,metrics=metrics,intervals=[],
                           power=dict(covered=True,power_scope="SIMULATED",average_power_w=100),note="SIMULATED: not a GPU measurement"))
     return dict(test_id=test,status="passed",started=now(),finished=now(),cases=cases,simulated=True)
 

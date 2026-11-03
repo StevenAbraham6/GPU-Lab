@@ -78,7 +78,7 @@ class Store:
         with self.connect() as db:
             db.execute("INSERT INTO audit(run_id,at,data) VALUES(?,?,?)", (rid, now(), json.dumps(data)))
 
-    def get(self, rid, samples=True):
+    def get(self, rid, samples=True, summary=False, results=True):
         self.directory(rid)
         with self.connect() as db:
             row = db.execute("SELECT * FROM runs WHERE id=?", (rid,)).fetchone()
@@ -88,7 +88,25 @@ class Store:
             for key in ("metadata", "snapshot", "config", "tests", "gpu"):
                 value[key] = json.loads(value[key])
             value["simulated"] = bool(value["simulated"])
-            value["results"] = [json.loads(r[0]) for r in db.execute("SELECT data FROM results WHERE run_id=? ORDER BY seq", (rid,))]
+            if not results:
+                value["results"] = []
+            elif summary:
+                # Return only the fields the overview needs. SQLite still reads the
+                # stored JSON, but Python never materializes large series or intervals.
+                value["results"] = []
+                for result in db.execute("SELECT seq,test_id,json_extract(data,'$.status') FROM results WHERE run_id=? ORDER BY seq", (rid,)):
+                    cases = []
+                    query = """SELECT json_extract(c.value,'$.name'), json_extract(c.value,'$.status'),
+                                      json_extract(c.value,'$.settings'), json_extract(c.value,'$.metrics')
+                               FROM results r, json_each(r.data,'$.cases') c WHERE r.seq=?"""
+                    for case in db.execute(query, (result[0],)):
+                        item = {"name":case[0], "status":case[1]}
+                        if case[2] is not None: item["settings"] = json.loads(case[2])
+                        if case[3] is not None: item["metrics"] = json.loads(case[3])
+                        cases.append(item)
+                    value["results"].append(dict(test_id=result[1], status=result[2], cases=cases))
+            else:
+                value["results"] = [json.loads(r[0]) for r in db.execute("SELECT data FROM results WHERE run_id=? ORDER BY seq", (rid,))]
             value["audit"] = [dict(at=r[0], **json.loads(r[1])) for r in db.execute("SELECT at,data FROM audit WHERE run_id=? ORDER BY seq", (rid,))]
             value["telemetry"] = [dict(ts=r[0], test_id=r[1], **json.loads(r[2])) for r in db.execute("SELECT ts,test_id,data FROM telemetry WHERE run_id=? ORDER BY seq", (rid,))] if samples else []
         value.update(schema_version=SCHEMA_VERSION, app_version=value['snapshot'].get('app_version',__version__), report_app_version=__version__)
@@ -133,6 +151,52 @@ class Store:
     def samples(self, rid, start, end):
         with self.connect() as db:
             return [dict(ts=r[0], **json.loads(r[1])) for r in db.execute("SELECT ts,data FROM telemetry WHERE run_id=? AND ts BETWEEN ? AND ? ORDER BY ts", (rid, start, end))]
+
+    def telemetry_overview(self, rid, buckets=400):
+        """Return original extrema, endpoints and transitions in bounded time buckets."""
+        self.directory(rid)
+        keys = ("power_w", "clock_mhz", "utilization_pct", "memory_used_mib")
+        with self.connect() as db:
+            bounds = db.execute("SELECT MIN(ts),MAX(ts) FROM telemetry WHERE run_id=?", (rid,)).fetchone()
+            if bounds[0] is None:
+                return []
+            start, end = bounds
+            span = end - start or 1
+            selected, bucket, group, previous = {}, None, [], None
+            def keep(row):
+                selected[row["seq"]] = row
+            def flush(rows):
+                if not rows:
+                    return
+                keep(rows[0]); keep(rows[-1])
+                for key in keys:
+                    valid = [r for r in rows if isinstance(r.get(key), (int, float)) and r[key] >= 0]
+                    if valid:
+                        keep(min(valid, key=lambda r: r[key])); keep(max(valid, key=lambda r: r[key]))
+            for record in db.execute("SELECT seq,ts,test_id,data FROM telemetry WHERE run_id=? ORDER BY ts,seq", (rid,)):
+                row = dict(seq=record[0], ts=record[1], test_id=record[2], **json.loads(record[3]))
+                index = min(buckets - 1, int((row['ts'] - start) / span * buckets))
+                if index != bucket:
+                    flush(group); group = []; bucket = index
+                if previous is not None and (row['test_id'] != previous['test_id'] or any((row.get(k) is None) != (previous.get(k) is None) for k in keys)):
+                    keep(previous); keep(row)
+                group.append(row); previous = row
+            flush(group)
+        return [{k: v for k, v in row.items() if k != 'seq'} for row in sorted(selected.values(), key=lambda r: (r['ts'], r['seq']))]
+
+    def telemetry_nearest(self, rid, stamp, key):
+        if key not in ("power_w", "clock_mhz", "utilization_pct", "memory_used_mib"):
+            raise ValueError("Invalid telemetry metric")
+        self.directory(rid)
+        with self.connect() as db:
+            # Search each side of the pointer using the (run_id, ts) index.
+            rows = []
+            for operator, order in (("<=", "DESC"), (">=", "ASC")):
+                sql = f"SELECT ts,test_id,data FROM telemetry WHERE run_id=? AND ts {operator} ? AND json_type(data, ?) IN ('integer','real') AND json_extract(data, ?) >= 0 ORDER BY ts {order} LIMIT 1"
+                row = db.execute(sql, (rid, stamp, '$.'+key, '$.'+key)).fetchone()
+                if row:
+                    rows.append(dict(ts=row[0], test_id=row[1], **json.loads(row[2])))
+        return min(rows, key=lambda row: abs(row['ts']-stamp)) if rows else None
 
     def recover(self):
         with self.connect() as db:
