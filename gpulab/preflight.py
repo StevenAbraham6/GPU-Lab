@@ -32,12 +32,12 @@ def check(gpu, tests, cfg, root, execute=True):
             result = probe("opencl-execute", gpu)
             add("OpenCL execution & correctness", "blocked" if result.get("error") else "ready", result.get("error") or "GPU kernel output validated", cl_tests)
     if "ai" in tests:
-        path = cfg.get('ai_model_path')
+        path = cfg.get('ai_model_path') or str(Path(root)/'models'/'Qwen2.5-7B-Instruct')
         model = Path(path).expanduser() if path else None
         valid = bool(model and model.is_dir() and (model/'config.json').is_file() and
-                     any(model.glob('*.safetensors')) and (model/'tokenizer.json').is_file())
-        add('Llama model files', 'ready' if valid else 'blocked',
-            str(model.resolve()) if valid else 'Set ai_model_path to a local Llama 3.1 8B Instruct directory containing config.json, tokenizer.json and safetensors weights.', ['ai'])
+                     all((model/f'model-0000{i}-of-00004.safetensors').is_file() for i in range(1,5)) and (model/'tokenizer.json').is_file())
+        add('Qwen model files', 'ready' if valid else 'blocked',
+            str(model.resolve()) if valid else 'Model files are missing or incomplete. Run gpu-lab setup-ai --backend nvidia (or --backend amd) on the server.', ['ai'])
         if execute:
             result = probe('ai', gpu, root)
             add('AI GPU backend', 'blocked' if result.get('error') else 'ready',

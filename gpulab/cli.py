@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -10,6 +11,7 @@ from .preflight import check
 from .runner import DEMO_GPU,cancel,continuation,create_run
 from .store import ACTIVE,Store
 from .timing import format_duration,run_timing
+from .updates import launch_guard
 
 def output(value):print(json.dumps(value,indent=2,ensure_ascii=False,allow_nan=False))
 
@@ -19,6 +21,8 @@ def parser():
     sub=p.add_subparsers(dest="command",required=True)
     sub.add_parser("devices",help="Discover physical GPU and OpenCL mappings")
     sub.add_parser("tests",help="List versioned workloads")
+    q=sub.add_parser("setup-ai",help="Install AI dependencies and download the public Qwen model")
+    q.add_argument('--backend',choices=['nvidia','amd'],required=True,help='Existing vendor PyTorch environment')
     for name in ("run","doctor"):
         q=sub.add_parser(name,help="Launch detached benchmarks" if name=="run" else "Run preflight checks without benchmarking")
         q.add_argument("tests",nargs="*",default=["all"]);q.add_argument("--gpu");q.add_argument("--profile",choices=["quick","standard","extended"],default="quick")
@@ -64,6 +68,12 @@ def main():
         cmd=args.command
         if cmd=="devices":output(discover())
         elif cmd=="tests":output(TESTS)
+        elif cmd=="setup-ai":
+            from .ai_setup import setup
+            with launch_guard(store):
+                if any(r['status'] in ACTIVE for r in store.list()):
+                    raise ValueError('Wait for active GPU Lab runs to finish before installing AI dependencies.')
+                setup(store.root,args.backend)
         elif cmd in ("run","doctor"):
             overrides=json.loads(Path(args.config).read_text()) if args.config else {}
             overrides.pop("profile",None)
@@ -97,7 +107,7 @@ def main():
             from .compare import comparison
             output(comparison(store.get(args.baseline,samples=False),store.get(args.candidate,samples=False)))
         return 0
-    except (ValueError,KeyError,OSError) as e:
+    except (ValueError,KeyError,OSError,subprocess.CalledProcessError) as e:
         print(f"GPU Lab: {e}",file=sys.stderr);return 2
 
 if __name__=="__main__":sys.exit(main())

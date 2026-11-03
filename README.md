@@ -161,24 +161,24 @@ gpu-lab run concurrency stability integrity --gpu GPU_ID --profile standard --wa
 gpu-lab run compute --gpu GPU_ID --profile standard --wait
 ```
 
-`compute` expands to `arithmetic` and `matrix`. `all` includes the AI test, which requires separately provisioned local Llama files and dependencies; use `--allow-partial` to explicitly skip a blocked AI test, or select the other groups individually. FFT/reduction/stencil application tests, graphics and ray tracing are outside this suite.
+`compute` expands to `arithmetic` and `matrix`. `all` includes the AI test, which requires the one-time Qwen setup below; use `--allow-partial` to explicitly skip a blocked AI test, or select the other groups individually. FFT/reduction/stencil application tests, graphics and ray tracing are outside this suite.
 
 ### AI inference stability
 
-The `ai` group runs Meta Llama 3.1 8B Instruct locally on the selected GPU in FP16. Obtain the original Hugging Face safetensors model and tokenizer files after accepting the [Llama 3.1 license](https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct). Place the complete files in a local directory accessible to the GPU Lab service. GPU Lab does not download models, transmit prompts, or offload model weights to the CPU. The 16-bit weights require approximately 16 GB, plus runtime and prompt memory.
-
-Install the AI dependencies into the **same vendor-specific PyTorch environment** used by GPU Lab (replace the path with your actual backend Python; repeat for each backend):
+The `ai` group runs Qwen2.5-7B-Instruct locally on the selected GPU in FP16. After updating GPU Lab, run this once on the server as the GPU Lab service user:
 
 ```bash
-~/.local/share/gpu-lab/backends/nvidia/bin/python -m pip install 'transformers>=4.43,<5' safetensors
+~/.local/bin/gpu-lab setup-ai --backend nvidia
 ```
 
-Choose the model directory in the New benchmark screen, or supply it in a JSON file, for example `{"ai_model_path":"/path/to/Llama-3.1-8B-Instruct"}`:
+Use `--backend amd` on an AMD server. This installs Transformers and safetensors in the existing vendor GPU environment and downloads the public model (about 15 GB) to GPU Lab's data directory. No account or token is required. It can be rerun after an interrupted download. The model remains local during inference; no prompts are transmitted and no weights are offloaded to the CPU. Allow additional system RAM, VRAM, and download/cache disk space. Run setup while no GPU Lab benchmarks are active.
 
 ```bash
-gpu-lab doctor ai --gpu GPU_ID --config ai.json
-gpu-lab run ai --gpu GPU_ID --profile quick --config ai.json --wait
+gpu-lab doctor ai --gpu GPU_ID
+gpu-lab run ai --gpu GPU_ID --profile quick --wait
 ```
+
+A custom local model directory can be specified through the advanced `ai_model_path` configuration. The same Qwen model and complete safetensors files are required.
 
 Quick, standard, and extended run AI inference for 30 seconds, 30 minutes, and 60 minutes respectively. Model loading, file hashing, and warm-up are outside the soak; a request in progress completes after the deadline. The overall test timeout also includes setup. Fixed prompts use greedy decoding for 64 output tokens per request; output is not evaluated for answer quality. The results show tokens/s, average first-token time, early/late speed, completed/failed requests, sampled peak temperature and VRAM, and peak PyTorch allocation. No per-request timeout is enforced; the existing overall test timeout stops a hung test. A failed process or overall timeout is reported as a test error, not a request count. Sensor values may be unavailable.
 
@@ -216,7 +216,7 @@ gpu-lab run all --gpu GPU_ID --allow-partial
 | `video` | Hardware encode, decode/readback and transcode; quality after timing | FPS and quality: **higher**, subject to bitrate/quality tradeoff |
 | `concurrency` | 1/2/4 compute queues, 1/2/4 video streams, mixed compute/video | Aggregate throughput: **higher**; per-job slowdown: **lower** |
 | `stability` | Time-bounded compute/memory/video phases | Sustained throughput and early/late behavior; contextual health results |
-| `ai` | Local Llama 3.1 8B sustained inference | Tokens/s, first-token latency, early/late speed, failures and GPU health |
+| `ai` | Local Qwen2.5 7B sustained inference | Tokens/s, first-token latency, early/late speed, failures and GPU health |
 | `integrity` | Address-dependent VRAM patterns, mismatch count, injected-error verifier self-test | Errors: **lower**; tested MiB: **coverage**, not a performance score |
 
 All arithmetic outputs are used. Correctness checks run before performance reporting. Integrity verification includes a deliberately injected error to prove the GPU checker can detect one; that injected error is not counted as a hardware fault.

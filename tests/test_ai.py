@@ -6,6 +6,7 @@ from unittest.mock import patch
 from gpulab.ai_backend import model_fingerprint, summarize
 from gpulab.catalog import config, select_tests
 from gpulab.preflight import check
+from gpulab.ai_setup import setup, MODEL, REVISION
 
 
 class AIWorkloadTests(unittest.TestCase):
@@ -32,9 +33,30 @@ class AIWorkloadTests(unittest.TestCase):
         gpu = dict(id='gpu', name='Test GPU', vendor='nvidia')
         with tempfile.TemporaryDirectory() as root, patch('gpulab.preflight.sample', return_value={'power_w': None, 'temperature_c': None}), patch('gpulab.preflight.command', return_value=(0, '', '')):
             result = check(gpu, ['ai'], config(), root, execute=False)
-        model_check = next(c for c in result['checks'] if c['name'] == 'Llama model files')
+        model_check = next(c for c in result['checks'] if c['name'] == 'Qwen model files')
         self.assertEqual(model_check['state'], 'blocked')
         self.assertEqual(model_check['tests'], ['ai'])
+
+    def test_setup_downloads_public_pinned_model_into_default_directory(self):
+        with tempfile.TemporaryDirectory() as root:
+            python = Path(root)/'backends/nvidia/bin/python'
+            python.parent.mkdir(parents=True)
+            python.touch()
+            def run(args, check):
+                if MODEL in args:
+                    model=Path(args[-1])
+                    for name in ['config.json','tokenizer.json'] + [f'model-0000{i}-of-00004.safetensors' for i in range(1,5)]:
+                        (model/name).touch()
+            with patch('gpulab.ai_setup.subprocess.run', side_effect=run) as calls:
+                setup(root,'nvidia')
+            download=calls.call_args_list[-1].args[0]
+            self.assertIn('token=False',download[2])
+            self.assertIn(REVISION,download)
+            self.assertEqual(download[-1],str(Path(root)/'models/Qwen2.5-7B-Instruct'))
+
+    def test_setup_requires_existing_gpu_backend(self):
+        with tempfile.TemporaryDirectory() as root, self.assertRaisesRegex(ValueError,'No nvidia backend'):
+            setup(root,'nvidia')
 
 
 if __name__ == '__main__':

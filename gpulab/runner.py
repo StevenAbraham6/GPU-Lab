@@ -25,6 +25,7 @@ def create_run(store, gpu_selector=None, names=None, cfg=None, metadata=None, si
 def _create_run(store, gpu_selector=None, names=None, cfg=None, metadata=None, simulated=False, parent=None, allow_partial=False):
     cfg_values=dict(cfg or {});profile=cfg_values.pop('profile','quick')
     cfg=config(profile,**cfg_values);tests=select_tests(names)
+    if not cfg['ai_model_path']:cfg['ai_model_path']=str(store.root/'models'/'Qwen2.5-7B-Instruct')
     inventory=discover() if not simulated else dict(host={"hostname":"demonstration","os":"simulated","cpu":"simulated"},gpus=[DEMO_GPU])
     gpu=DEMO_GPU if simulated else select_gpu(inventory,gpu_selector)
     snapshot=dict(host=inventory["host"],gpu=gpu,app_version=__version__,captured=now(),
@@ -110,7 +111,7 @@ def demo_result(test,cfg):
               "video":[("H264 · 1080p encode",440,"frames/s","higher"),("HEVC · 4K encode",110,"frames/s","higher")],
               "concurrency":[("2 concurrent jobs",16800,"GFLOP/s","higher")],
               "stability":[("sustained FP32",12300,"GFLOP/s","higher")],
-              "ai":[("Llama 3.1 8B inference",42,"tokens/s","higher")],
+              "ai":[("Qwen2.5 7B inference",42,"tokens/s","higher")],
               "integrity":[("VRAM mismatches",0,"errors","lower")]}
     for name,value,unit,direction in examples[test]:
         metrics=[metric("throughput" if direction=="higher" else "latency" if unit in ("µs","ns/access") else "mismatches",value,unit,direction)]
