@@ -1,12 +1,17 @@
 import tempfile
 import unittest
+import os
+import shutil
+import subprocess
+import sys
+import shlex
 from pathlib import Path
 from unittest.mock import patch
 
 from gpulab.ai_backend import model_fingerprint, summarize
 from gpulab.catalog import config, select_tests
 from gpulab.preflight import check
-from gpulab.ai_setup import setup, MODEL, REVISION
+from gpulab.ai_setup import setup, select_backends, MODEL, REVISION
 
 
 class AIWorkloadTests(unittest.TestCase):
@@ -57,6 +62,60 @@ class AIWorkloadTests(unittest.TestCase):
     def test_setup_requires_existing_gpu_backend(self):
         with tempfile.TemporaryDirectory() as root, self.assertRaisesRegex(ValueError,'No nvidia backend'):
             setup(root,'nvidia')
+
+    def test_detects_unique_nvidia_and_amd_backends(self):
+        inventory={'gpus':[{'vendor':'nvidia'},{'vendor':'amd'},{'vendor':'nvidia'},{'vendor':'intel'}]}
+        self.assertEqual(select_backends('auto',inventory),['amd','nvidia'])
+        self.assertEqual(select_backends('nvidia'),['nvidia'])
+        self.assertEqual(select_backends('both'),['amd','nvidia'])
+        with self.assertRaisesRegex(ValueError,'No NVIDIA or AMD GPU detected'):
+            select_backends('auto',{'gpus':[]})
+
+    def test_setup_with_both_vendors_downloads_only_once(self):
+        with tempfile.TemporaryDirectory() as root:
+            for vendor in ('nvidia','amd'):
+                python=Path(root)/'backends'/vendor/'bin/python'
+                python.parent.mkdir(parents=True)
+                python.touch()
+            def run(args, check):
+                if MODEL in args:
+                    model=Path(args[-1])
+                    for name in ['config.json','tokenizer.json']+[f'model-0000{i}-of-00004.safetensors' for i in range(1,5)]:
+                        (model/name).touch()
+            with patch('gpulab.ai_setup.subprocess.run',side_effect=run) as calls:
+                setup(root,['amd','nvidia'])
+            self.assertEqual(sum(MODEL in call.args[0] for call in calls.call_args_list),1)
+            self.assertEqual(sum('-m' in call.args[0] for call in calls.call_args_list),2)
+
+    def test_new_installer_runs_ai_setup_for_both_backends(self):
+        with tempfile.TemporaryDirectory() as root:
+            root=Path(root)
+            source=root/'source'
+            source.mkdir()
+            shutil.copyfile('install.sh',source/'install.sh')
+            (source/'pyproject.toml').write_text('[project]\nname="test"\n')
+            fakebin=root/'fakebin'
+            fakebin.mkdir()
+            uname=fakebin/'uname'
+            uname.write_text('#!/bin/sh\necho Linux\n')
+            uname.chmod(0o755)
+            python=root/'python'
+            python.write_text('''#!/usr/bin/env bash
+set -eu
+if [[ "$1" == '-I' ]]; then shift; fi
+if [[ "$1" == '-m' && "$2" == 'venv' ]]; then mkdir -p "$3/bin"; cp "$0" "$3/bin/python"; exit 0; fi
+if [[ "$1" == '-m' && "$2" == 'pip' ]]; then exit 0; fi
+if [[ "$1" == '-m' && "$2" == 'gpulab' ]]; then printf '%s\\n' "$*" >> "$GPU_LAB_TEST_LOG"; exit 0; fi
+exec '''+shlex.quote(sys.executable)+''' "$@"
+''')
+            python.chmod(0o755)
+            log=root/'commands.log'
+            env={**os.environ,'HOME':str(root),'PATH':str(fakebin)+os.pathsep+os.environ['PATH'],
+                 'GPU_LAB_PYTHON':str(python),'GPU_LAB_PREFIX':str(root/'app'),
+                 'GPU_LAB_HOME':str(root/'data'),'GPU_LAB_BIN':str(root/'bin'),'GPU_LAB_TEST_LOG':str(log)}
+            result=subprocess.run(['bash',str(source/'install.sh'),'--backend','both','--no-system-packages','--skip-video-build'],env=env,capture_output=True,text=True,timeout=30)
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertIn('setup-ai --backend both',log.read_text())
 
 
 if __name__ == '__main__':

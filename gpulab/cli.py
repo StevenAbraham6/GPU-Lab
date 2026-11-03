@@ -22,7 +22,7 @@ def parser():
     sub.add_parser("devices",help="Discover physical GPU and OpenCL mappings")
     sub.add_parser("tests",help="List versioned workloads")
     q=sub.add_parser("setup-ai",help="Install AI dependencies and download the public Qwen model")
-    q.add_argument('--backend',choices=['nvidia','amd'],required=True,help='Existing vendor PyTorch environment')
+    q.add_argument('--backend',choices=['auto','nvidia','amd','both'],default='auto',help='Vendor PyTorch environment (default: detect installed GPUs)')
     for name in ("run","doctor"):
         q=sub.add_parser(name,help="Launch detached benchmarks" if name=="run" else "Run preflight checks without benchmarking")
         q.add_argument("tests",nargs="*",default=["all"]);q.add_argument("--gpu");q.add_argument("--profile",choices=["quick","standard","extended"],default="quick")
@@ -69,11 +69,12 @@ def main():
         if cmd=="devices":output(discover())
         elif cmd=="tests":output(TESTS)
         elif cmd=="setup-ai":
-            from .ai_setup import setup
+            from .ai_setup import setup, select_backends
             with launch_guard(store):
                 if any(r['status'] in ACTIVE for r in store.list()):
                     raise ValueError('Wait for active GPU Lab runs to finish before installing AI dependencies.')
-                setup(store.root,args.backend)
+                vendors=select_backends(args.backend,discover() if args.backend=='auto' else None)
+                setup(store.root,vendors)
         elif cmd in ("run","doctor"):
             overrides=json.loads(Path(args.config).read_text()) if args.config else {}
             overrides.pop("profile",None)

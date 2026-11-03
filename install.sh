@@ -129,6 +129,10 @@ for vendor in nvidia amd; do
     "$runtime/bin/python" -m pip install --index-url "${GPU_LAB_AMD_INDEX:-https://stable.repo.amd.com/rocm/whl-next/}" "${GPU_LAB_AMD_TORCH:-torch[device-all]==2.14.0+rocm10.1.0}"
   fi
 done
+if [[ "$backend" != none ]]; then
+  printf '\nSetting up AI inference (downloads approximately 15 GB of model files).\n'
+  "$py" -I -m gpulab --data-dir "$GPU_LAB_DATA" setup-ai --backend "$backend"
+fi
 if [[ "$video_build" == 1 && "$app_only" == 0 ]]; then
   bash "$source_dir/scripts/build-video.sh" "$GPU_LAB_PREFIX/tools"
 fi

@@ -36,7 +36,7 @@ The bootstrap installs the source published on `main`; local development changes
 - NVIDIA: `nvidia-smi` must work. The default math environment uses a CUDA 12.8 PyTorch build; it needs a compatible driver. The CUDA toolkit/compiler is not required for those PyTorch wheels.
 - AMD: `/dev/kfd` and the GPU's DRM render node must be accessible. Install the matching vendor OpenCL runtime/ICD as well as the kernel driver. `rocm-opencl-runtime` is available through the appropriate AMD apt repository; the installer does not register or replace vendor repositories.
 - `/dev/dri/renderD*` access is required for AMD/Intel VAAPI media. NVIDIA uses NVENC/NVDEC through its driver.
-- Internet access, sudo for apt prerequisites, and enough disk space for Python/FFmpeg builds and GPU wheels. Allow **15–30 GiB** for a full two-vendor installation and build caches, plus run artifacts. Building video tools can take several minutes.
+- Internet access, sudo for apt prerequisites, and enough disk space for Python/FFmpeg builds, GPU wheels, and the approximately 15 GB AI model, plus download caches and run artifacts. Building video tools and downloading the model can take time.
 - A display server is not required. The application does not change power limits, clocks, drivers, Secure Boot or BIOS settings.
 
 **A GPU with no driver may require driver installation, Secure Boot enrollment and a reboot before any benchmark can work.** GPU Lab installs the entire application in one command; it cannot eliminate those host requirements. It detects and explains them through `doctor`/preflight instead of claiming a successful hardware setup.
@@ -168,10 +168,10 @@ gpu-lab run compute --gpu GPU_ID --profile standard --wait
 The `ai` group runs Qwen2.5-7B-Instruct locally on the selected GPU in FP16. After updating GPU Lab, run this once on the server as the GPU Lab service user:
 
 ```bash
-~/.local/bin/gpu-lab setup-ai --backend nvidia
+~/.local/bin/gpu-lab setup-ai
 ```
 
-Use `--backend amd` on an AMD server. This installs Transformers and safetensors in the existing vendor GPU environment and downloads the public model (about 15 GB) to GPU Lab's data directory. No account or token is required. It can be rerun after an interrupted download. The model remains local during inference; no prompts are transmitted and no weights are offloaded to the CPU. Allow additional system RAM, VRAM, and download/cache disk space. Run setup while no GPU Lab benchmarks are active.
+New installations with an NVIDIA or AMD backend perform this AI setup automatically. Existing servers can run the command above once after updating GPU Lab. It detects NVIDIA and AMD GPUs, installs Transformers and safetensors in each detected vendor's existing GPU environment, and downloads the public model once (about 15 GB) to GPU Lab's data directory. If detection is unavailable, select `--backend nvidia` or `--backend amd` explicitly. No account or token is required. It can be rerun after an interrupted download. The model remains local during inference; no prompts are transmitted and no weights are offloaded to the CPU. Allow additional system RAM, VRAM, and download/cache disk space. Run setup while no GPU Lab benchmarks are active. App-only installs and app-only updates do not install AI dependencies or download the model.
 
 ```bash
 gpu-lab doctor ai --gpu GPU_ID

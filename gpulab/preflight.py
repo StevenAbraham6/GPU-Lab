@@ -37,7 +37,7 @@ def check(gpu, tests, cfg, root, execute=True):
         valid = bool(model and model.is_dir() and (model/'config.json').is_file() and
                      all((model/f'model-0000{i}-of-00004.safetensors').is_file() for i in range(1,5)) and (model/'tokenizer.json').is_file())
         add('Qwen model files', 'ready' if valid else 'blocked',
-            str(model.resolve()) if valid else 'Model files are missing or incomplete. Run gpu-lab setup-ai --backend nvidia (or --backend amd) on the server.', ['ai'])
+            str(model.resolve()) if valid else 'Model files are missing or incomplete. Run gpu-lab setup-ai on the server.', ['ai'])
         if execute:
             result = probe('ai', gpu, root)
             add('AI GPU backend', 'blocked' if result.get('error') else 'ready',
