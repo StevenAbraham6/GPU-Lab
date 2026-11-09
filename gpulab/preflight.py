@@ -31,17 +31,21 @@ def check(gpu, tests, cfg, root, execute=True):
         elif execute:
             result = probe("opencl-execute", gpu)
             add("OpenCL execution & correctness", "blocked" if result.get("error") else "ready", result.get("error") or "GPU kernel output validated", cl_tests)
-    if "ai" in tests:
-        path = cfg.get('ai_model_path') or str(Path(root)/'models'/'Qwen2.5-7B-Instruct')
-        model = Path(path).expanduser() if path else None
-        valid = bool(model and model.is_dir() and (model/'config.json').is_file() and
-                     all((model/f'model-0000{i}-of-00004.safetensors').is_file() for i in range(1,5)) and (model/'tokenizer.json').is_file())
-        add('Qwen model files', 'ready' if valid else 'blocked',
-            str(model.resolve()) if valid else 'Model files are missing or incomplete. Run gpu-lab setup-ai on the server.', ['ai'])
-        if execute:
-            result = probe('ai', gpu, root)
-            add('AI GPU backend', 'blocked' if result.get('error') else 'ready',
-                result.get('error') or f"GPU {result['device']}; PyTorch {result['torch_version']}; Transformers {result['transformers_version']}", ['ai'])
+    ai_tests = [t for t in ('ai', 'ai_moe') if t in tests]
+    for test in ai_tests:
+        moe = test == 'ai_moe'
+        model_name = 'OLMoE-1B-7B-0924-Instruct' if moe else 'Qwen2.5-7B-Instruct'
+        path = cfg.get('ai_moe_model_path' if moe else 'ai_model_path') or str(Path(root)/'models'/model_name)
+        model = Path(path).expanduser()
+        shards = 3 if moe else 4
+        valid = bool(model.is_dir() and (model/'config.json').is_file() and
+                     all((model/f'model-{i:05d}-of-{shards:05d}.safetensors').is_file() for i in range(1,shards+1)) and (model/'tokenizer.json').is_file())
+        add('OLMoE model files' if moe else 'Qwen model files', 'ready' if valid else 'blocked',
+            str(model.resolve()) if valid else ('Model files missing or incomplete. Run gpu-lab setup-ai --model moe on the server.' if moe else 'Model files missing or incomplete. Run gpu-lab setup-ai on the server.'), [test])
+    if ai_tests and execute:
+        result = probe('ai', gpu, root)
+        add('AI GPU backend', 'blocked' if result.get('error') else 'ready',
+            result.get('error') or f"GPU {result['device']}; PyTorch {result['torch_version']}; Transformers {result['transformers_version']}", ai_tests)
     if "matrix" in tests:
         result = probe("torch", gpu, root) if execute else {}
         if result.get("error"):

@@ -41,15 +41,18 @@ def summarize(requests):
     return metrics
 
 
-def inference(gpu, cfg):
+def inference(gpu, cfg, model_kind="dense"):
     import transformers
     from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
     import torch
 
-    path = Path(cfg['ai_model_path']).expanduser().resolve()
+    moe = model_kind == 'moe'
+    name = 'OLMoE-1B-7B-0924-Instruct' if moe else 'Qwen2.5-7B-Instruct'
+    path = Path(cfg['ai_moe_model_path'] if moe else cfg['ai_model_path']).expanduser().resolve()
     config = AutoConfig.from_pretrained(str(path), local_files_only=True, trust_remote_code=False)
-    if (config.model_type, config.hidden_size, config.num_hidden_layers) != ('qwen2', 3584, 28):
-        raise ValueError('Expected local Qwen2.5-7B-Instruct model files; model architecture does not match')
+    expected = ('olmoe', 2048, 16) if moe else ('qwen2', 3584, 28)
+    if (config.model_type, config.hidden_size, config.num_hidden_layers) != expected:
+        raise ValueError(f'Expected local {name} model files; model architecture does not match')
     fingerprint = model_fingerprint(path)
     torch, runtime, dev = torch_device(gpu)
     runtime.set_device(dev)
@@ -62,10 +65,10 @@ def inference(gpu, cfg):
         encoded = tokenizer.apply_chat_template([{'role': 'user', 'content': prompt}], add_generation_prompt=True,
                                                  return_tensors='pt')
         prompts.append(encoded.to(dev))
-    settings = dict(model='Qwen2.5-7B-Instruct', model_sha256=fingerprint, precision='fp16',
+    settings = dict(model=name, model_sha256=fingerprint, precision='fp16',
                     max_output_tokens=OUTPUT_TOKENS, decoding='greedy, fixed token count',
                     prompt_set='gpu-lab-ai-v1', input_tokens=[int(p.shape[-1]) for p in prompts],
-                    soak_seconds=cfg['soak_seconds'], torch_version=str(torch.__version__),
+                    soak_seconds=cfg.get('ai_soak_seconds', cfg['soak_seconds']), torch_version=str(torch.__version__),
                     transformers_version=transformers.__version__)
 
     def request(tokens):
@@ -89,7 +92,7 @@ def inference(gpu, cfg):
     start = time.monotonic()
     requests = []
     failure = None
-    while time.monotonic() - start < cfg['soak_seconds']:
+    while time.monotonic() - start < settings['soak_seconds']:
         try:
             requests.append(request(prompts[len(requests) % len(prompts)]))
         except Exception as exc:
@@ -99,7 +102,7 @@ def inference(gpu, cfg):
     metrics = summarize(requests) if requests else [metric('completed requests', 0, 'requests', 'context')]
     metrics.extend([metric('failed requests', int(failure is not None), 'requests', 'lower'),
                     metric('peak PyTorch allocated VRAM', runtime.max_memory_allocated(dev)/1024**2, 'MiB', 'context')])
-    return [dict(name='Qwen2.5 7B inference', status='error' if failure else 'passed', reason=failure,
+    return [dict(name=(name + ' inference' if moe else 'Qwen2.5 7B inference'), status='error' if failure else 'passed', reason=failure,
                  settings=settings, metrics=metrics, intervals=[],
                  measurement_window=dict(start=started_wall, end=end_wall),
                  note='Fixed-length greedy generation; per-request timeouts are not enforced. The overall test timeout remains active.')]

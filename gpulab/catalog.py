@@ -34,10 +34,14 @@ TESTS = [
          summary="Compute, memory and hardware video phases with time-series throughput.",
          method="Split the configured total soak duration across selected compute, memory and video phases. Check compute/memory outputs, record throughput and telemetry, compare early and late intervals. Video uses the first configured codec, resolution and mode, with preparation excluded and encode process boundaries included.",
          boundary="Wall time per interval, including checks; GPU power collected independently. User temperature ceiling stops the run if exposed sensor reaches it."),
-    dict(id="ai", group="ai", title="AI inference stability", backend="torch",
+    dict(id="ai", group="ai", title="AI inference · dense", backend="torch",
          summary="Sustained local Qwen2.5 7B inference, speed and GPU health.",
          method="Run fixed prompts with greedy generation on the selected GPU using local Qwen2.5-7B-Instruct weights in FP16. Report generation speed, time to first token, early and late speed, failures and GPU health. Model files and workload are fingerprinted for comparison.",
          boundary="Model loading and warm-up excluded. Full requests finish after the soak deadline. No CPU model offload or network access."),
+    dict(id="ai_moe", group="ai_moe", title="AI inference · MoE", backend="torch",
+         summary="Sustained local OLMoE 1B-7B mixture-of-experts inference.",
+         method="Run fixed prompts and 64 greedy generation steps on the selected GPU using OLMoE-1B-7B-0924-Instruct in FP16. Report output speed, first-token time and GPU health. Model files and workload are fingerprinted.",
+         boundary="Model loading and warm-up excluded. Requests complete after the deadline. No CPU model offload or network access."),
     dict(id="integrity", group="integrity", title="VRAM integrity", backend="opencl",
          summary="Address-dependent pattern verification across a configurable memory allocation.",
          method="Allocate bounded VRAM; write zero, all-one, alternating and address-hashed patterns in multiple passes, then GPU-verify every word and read mismatch counts. Host spot-checks verify the verifier. Cannot allocate driver-reserved memory; this is not a hardware certification or an ECC scrub.",
@@ -58,17 +62,19 @@ def config(profile="quick", **overrides):
                  codecs=["h264", "hevc", "av1"], resolutions=["1920x1080", "3840x2160"],
                  video_modes=["quality", "low-latency"], reference=None, max_temp=90.0,
                  memory_fraction=0.5, integrity_passes=2, timeout=7200,
-                 concurrency_media=True, soak_workloads=["compute","memory","video"], ai_model_path=None)
+                 concurrency_media=True, soak_workloads=["compute","memory","video"], ai_model_path=None, ai_moe_model_path=None,
+                 ai_soak_seconds={"quick":30, "standard":300, "extended":1800}[profile])
     unknown=set(overrides)-set(value)-{'allow_partial'}
     if unknown:raise ValueError('Unknown configuration fields: '+', '.join(sorted(unknown)))
     value.update({k: v for k, v in overrides.items() if v is not None})
-    if value['ai_model_path'] is not None and (not isinstance(value['ai_model_path'], str) or not value['ai_model_path'].strip()):
-        raise ValueError('ai_model_path must be a nonempty local directory path')
+    for key in ('ai_model_path', 'ai_moe_model_path'):
+        if value[key] is not None and (not isinstance(value[key], str) or not value[key].strip()):
+            raise ValueError(f'{key} must be a nonempty local directory path')
     if not isinstance(value['memory_fraction'],(int,float)) or isinstance(value['memory_fraction'],bool) or not (0.05 <= value["memory_fraction"] <= 0.8):
         raise ValueError("memory_fraction must be 0.05–0.8")
     for key, low, high in [("duration", .1, 600), ("warmup", 0, 60), ("repeats", 1, 20),
                            ("buffer_mib", 1, 65536), ("soak_seconds", 1, 86400),
-                           ("video_seconds", 1, 600), ("sample_interval", .1, 10),
+                           ("ai_soak_seconds", 1, 86400), ("video_seconds", 1, 600), ("sample_interval", .1, 10),
                            ("max_temp", 40, 110), ("integrity_passes", 1, 20), ("timeout", 5, 172800)]:
         if not isinstance(value[key],(float,int)) or isinstance(value[key],bool) or not low <= value[key] <= high:
             raise ValueError(f"{key} must be {low}–{high}")

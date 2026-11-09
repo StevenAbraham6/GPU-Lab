@@ -16,7 +16,7 @@ from gpulab.ai_setup import setup, select_backends, MODEL, REVISION
 
 class AIWorkloadTests(unittest.TestCase):
     def test_profile_and_metrics(self):
-        self.assertEqual([config(p)['soak_seconds'] for p in ('quick', 'standard', 'extended')], [30, 1800, 3600])
+        self.assertEqual([config(p)['ai_soak_seconds'] for p in ('quick', 'standard', 'extended')], [30, 300, 1800])
         self.assertIn('ai', select_tests(['all']))
         rows = {m['name']: m['value'] for m in summarize([
             dict(tokens=64, seconds=2, first=.2), dict(tokens=64, seconds=4, first=.4)])}
@@ -24,6 +24,44 @@ class AIWorkloadTests(unittest.TestCase):
         self.assertAlmostEqual(rows['time to first token'], .3)
         self.assertEqual(rows['early output speed'], 32)
         self.assertEqual(rows['late output speed'], 16)
+
+    def test_ai_workloads_are_independent_and_stability_profile_is_unchanged(self):
+        self.assertEqual(select_tests(['ai']), ['ai'])
+        self.assertEqual(select_tests(['ai_moe']), ['ai_moe'])
+        self.assertIn('ai_moe', select_tests(['all']))
+        self.assertEqual(config('standard')['soak_seconds'], 1800)
+        self.assertEqual(config('extended', ai_soak_seconds=60)['ai_soak_seconds'], 60)
+
+    def test_moe_preflight_is_independent_and_requires_all_shards(self):
+        gpu = dict(id='gpu', name='Test GPU', vendor='nvidia')
+        with tempfile.TemporaryDirectory() as root, patch('gpulab.preflight.sample', return_value={'power_w': None, 'temperature_c': None}), patch('gpulab.preflight.command', return_value=(0, '', '')):
+            model = Path(root)/'models'/'OLMoE-1B-7B-0924-Instruct'
+            model.mkdir(parents=True)
+            for name in ['config.json', 'tokenizer.json'] + [f'model-{i:05d}-of-00003.safetensors' for i in range(1, 4)]:
+                (model/name).touch()
+            result = check(gpu, ['ai', 'ai_moe'], config(), root, execute=False)
+            rows = {row['name']: row for row in result['checks']}
+            self.assertEqual(rows['Qwen model files']['state'], 'blocked')
+            self.assertEqual(rows['OLMoE model files']['state'], 'ready')
+            (model/'model-00003-of-00003.safetensors').unlink()
+            result = check(gpu, ['ai_moe'], config(), root, execute=False)
+            self.assertEqual(next(row for row in result['checks'] if row['name'] == 'OLMoE model files')['state'], 'blocked')
+
+    def test_setup_downloads_moe_only_when_selected(self):
+        from gpulab.ai_setup import MOE_MODEL, MOE_REVISION
+        with tempfile.TemporaryDirectory() as root:
+            python = Path(root)/'backends/nvidia/bin/python'
+            python.parent.mkdir(parents=True)
+            python.touch()
+            def run(args, check):
+                if MOE_MODEL in args:
+                    for name in ['config.json', 'tokenizer.json'] + [f'model-{i:05d}-of-00003.safetensors' for i in range(1, 4)]:
+                        (Path(args[-1])/name).touch()
+            with patch('gpulab.ai_setup.subprocess.run', side_effect=run) as calls:
+                setup(root, 'nvidia', 'moe')
+            download = calls.call_args_list[-1].args[0]
+            self.assertIn(MOE_MODEL, download)
+            self.assertIn(MOE_REVISION, download)
 
     def test_fingerprint_tracks_content_not_directory(self):
         with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:

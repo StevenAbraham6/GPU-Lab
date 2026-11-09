@@ -161,7 +161,7 @@ gpu-lab run concurrency stability integrity --gpu GPU_ID --profile standard --wa
 gpu-lab run compute --gpu GPU_ID --profile standard --wait
 ```
 
-`compute` expands to `arithmetic` and `matrix`. `all` includes the AI test, which requires the one-time Qwen setup below; use `--allow-partial` to explicitly skip a blocked AI test, or select the other groups individually. FFT/reduction/stencil application tests, graphics and ray tracing are outside this suite.
+`compute` expands to `arithmetic` and `matrix`. `all` includes both AI tests, which require the model setup below; use `--allow-partial` to explicitly skip a blocked AI test, or select the other groups individually. FFT/reduction/stencil application tests, graphics and ray tracing are outside this suite.
 
 ### AI inference stability
 
@@ -178,9 +178,16 @@ gpu-lab doctor ai --gpu GPU_ID
 gpu-lab run ai --gpu GPU_ID --profile quick --wait
 ```
 
-A custom local model directory can be specified through the advanced `ai_model_path` configuration. The same Qwen model and complete safetensors files are required.
+A custom local model directory can be specified through the advanced `ai_model_path` configuration. The same Qwen model and complete safetensors files are required. The MoE model can similarly be specified with `ai_moe_model_path`.
 
-Quick, standard, and extended run AI inference for 30 seconds, 30 minutes, and 60 minutes respectively. Model loading, file hashing, and warm-up are outside the soak; a request in progress completes after the deadline. The overall test timeout also includes setup. Fixed prompts use greedy decoding for 64 output tokens per request; output is not evaluated for answer quality. The results show tokens/s, average first-token time, early/late speed, completed/failed requests, sampled peak temperature and VRAM, and peak PyTorch allocation. No per-request timeout is enforced; the existing overall test timeout stops a hung test. A failed process or overall timeout is reported as a test error, not a request count. Sensor values may be unavailable.
+The separate optional MoE workload uses OLMoE-1B-7B-0924-Instruct, also locally in FP16. Install it on the GPU server with `gpu-lab setup-ai --model moe` (add `--backend nvidia`, `amd`, or `both` if needed). Select it independently as `ai_moe` in the CLI or in the workload selection UI. It downloads approximately 14 GB of model files.
+
+```bash
+gpu-lab doctor ai_moe --gpu GPU_ID
+gpu-lab run ai_moe --gpu GPU_ID --profile quick --wait
+```
+
+Quick, standard, and extended run each AI inference workload for 30 seconds, 5 minutes, and 30 minutes respectively. Set `ai_soak_seconds` to override the AI duration without changing the general sustained workload. Model loading, file hashing, and warm-up are outside the soak; a request in progress completes after the deadline. The overall test timeout also includes setup. Fixed prompts use 64 greedy generation steps per request, including any steps after an end-of-sequence token; output is not evaluated for answer quality. The results show tokens/s, average first-token time, early/late speed, completed/failed requests, sampled peak temperature and VRAM, and peak PyTorch allocation. No per-request timeout is enforced; the existing overall test timeout stops a hung test. A failed process or overall timeout is reported as a test error, not a request count. Sensor values may be unavailable.
 
 The model files are hashed and the fingerprint and runtime versions are retained with the workload settings. Compare the same weights, settings and software versions across GPUs; this is a comparison of the full hardware and software stack. Physical NVIDIA and AMD execution has not yet been qualified.
 
@@ -216,7 +223,7 @@ gpu-lab run all --gpu GPU_ID --allow-partial
 | `video` | Hardware encode, decode/readback and transcode; quality after timing | FPS and quality: **higher**, subject to bitrate/quality tradeoff |
 | `concurrency` | 1/2/4 compute queues, 1/2/4 video streams, mixed compute/video | Aggregate throughput: **higher**; per-job slowdown: **lower** |
 | `stability` | Time-bounded compute/memory/video phases | Sustained throughput and early/late behavior; contextual health results |
-| `ai` | Local Qwen2.5 7B sustained inference | Tokens/s, first-token latency, early/late speed, failures and GPU health |
+| `ai` / `ai_moe` | Local Qwen2.5 7B dense / OLMoE 1B-7B inference | Tokens/s, first-token latency, early/late speed, failures and GPU health |
 | `integrity` | Address-dependent VRAM patterns, mismatch count, injected-error verifier self-test | Errors: **lower**; tested MiB: **coverage**, not a performance score |
 
 All arithmetic outputs are used. Correctness checks run before performance reporting. Integrity verification includes a deliberately injected error to prove the GPU checker can detect one; that injected error is not counted as a hardware fault.

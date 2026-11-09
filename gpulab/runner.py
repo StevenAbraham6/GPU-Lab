@@ -26,6 +26,7 @@ def _create_run(store, gpu_selector=None, names=None, cfg=None, metadata=None, s
     cfg_values=dict(cfg or {});profile=cfg_values.pop('profile','quick')
     cfg=config(profile,**cfg_values);tests=select_tests(names)
     if not cfg['ai_model_path']:cfg['ai_model_path']=str(store.root/'models'/'Qwen2.5-7B-Instruct')
+    if not cfg['ai_moe_model_path']:cfg['ai_moe_model_path']=str(store.root/'models'/'OLMoE-1B-7B-0924-Instruct')
     inventory=discover() if not simulated else dict(host={"hostname":"demonstration","os":"simulated","cpu":"simulated"},gpus=[DEMO_GPU])
     gpu=DEMO_GPU if simulated else select_gpu(inventory,gpu_selector)
     snapshot=dict(host=inventory["host"],gpu=gpu,app_version=__version__,captured=now(),
@@ -112,6 +113,7 @@ def demo_result(test,cfg):
               "concurrency":[("2 concurrent jobs",16800,"GFLOP/s","higher")],
               "stability":[("sustained FP32",12300,"GFLOP/s","higher")],
               "ai":[("Qwen2.5 7B inference",42,"tokens/s","higher")],
+              "ai_moe":[("OLMoE 1B-7B inference",55,"tokens/s","higher")],
               "integrity":[("VRAM mismatches",0,"errors","lower")]}
     for name,value,unit,direction in examples[test]:
         metrics=[metric("throughput" if direction=="higher" else "latency" if unit in ("µs","ns/access") else "mismatches",value,unit,direction)]
@@ -119,7 +121,7 @@ def demo_result(test,cfg):
             metrics.append(metric("average GPU power",100,"W","context"))
             if test!="arithmetic":metrics.append(metric("work per joule",value/100,unit.replace("/s","/J"),"higher"))
         if test=="video":metrics += [metric("VMAF",94.2,"score"),metric("output bitrate",8,"Mbit/s","context")]
-        if test=="ai":metrics += [metric('time to first token',.5,'s','lower'),metric('early output speed',43,'tokens/s','higher'),metric('late output speed',41,'tokens/s','higher'),metric('failed requests',0,'requests','lower'),metric('peak GPU temperature',70,'°C','context'),metric('peak GPU VRAM usage',18000,'MiB','context')]
+        if test in ("ai", "ai_moe"):metrics += [metric('time to first token',.5,'s','lower'),metric('early output speed',43,'tokens/s','higher'),metric('late output speed',41,'tokens/s','higher'),metric('failed requests',0,'requests','lower'),metric('peak GPU temperature',70,'°C','context'),metric('peak GPU VRAM usage',18000,'MiB','context')]
         settings={"fixture":"synthetic-v1","profile":cfg["profile"]}
         if test=="arithmetic":settings["independent_accumulators"]=int(name.split('·')[1].split()[0])
         cases.append(dict(name=name,status="passed",settings=settings,metrics=metrics,intervals=[],
@@ -185,7 +187,7 @@ def work(store,rid):
             collector.test_id=test;collector.take()
             folder=store.directory(rid);spec=folder/(test+"-spec.json");out=folder/(test+"-raw.json")
             atomic_json(spec,dict(test_id=test,gpu=gpu,config=cfg,directory=str(folder/"video")))
-            python=backend_python(gpu,store.root) if test in ("matrix","ai") else sys.executable
+            python=backend_python(gpu,store.root) if test in ("matrix","ai","ai_moe") else sys.executable
             with (folder/(test+".log")).open("ab") as log:
                 env=os.environ.copy();env['GPU_LAB_PARENT_PID']=str(os.getpid())
                 child=subprocess.Popen([python,str(Path(__file__).with_name('backend_entry.py')),"bench",str(spec),str(out)],stdin=subprocess.DEVNULL,stdout=log,stderr=subprocess.STDOUT,start_new_session=True,env=env)
@@ -205,7 +207,7 @@ def work(store,rid):
                 result=dict(test_id=test,status="error",reason=f"Benchmark process exited {child.returncode}; inspect {test}.log",cases=[])
             else:
                 result=json.loads(out.read_text());result=efficiency(store,rid,result,cfg)
-                if test=='ai':
+                if test in ('ai', 'ai_moe'):
                     for case in result.get('cases',[]):
                         window=case.get('measurement_window')
                         if window:

@@ -18,3 +18,10 @@ test('does not mislabel requests as speed if token speed is absent',()=>{
 test('supports the existing simulated AI throughput metric',()=>{
   assert.match(render([{name:'throughput',value:42,unit:'tokens/s',direction:'higher'}]),/tokens\/s/);
 });
+
+test('shows MoE token speed instead of request count',()=>{
+  vm.runInContext("state.catalog.tests.push({id:'ai_moe',title:'AI inference · MoE'})",context);
+  const html=context.glance({results:[{test_id:'ai_moe',status:'passed',cases:[{name:'OLMoE',status:'passed',metrics:[{name:'completed requests',value:8,unit:'requests'},{name:'output tokens per second',value:50,unit:'tokens/s',direction:'higher'}]}]}]});
+  assert.match(html,/tokens\/s/);
+  assert.doesNotMatch(html,/8<\/span><span class="unit">requests/);
+});
