@@ -5,3 +5,5 @@
 .telemetry-chart{overflow:visible}.chart-band-0{fill:#e5f3ef}.chart-band-1{fill:#eaf0f8}.chart-workloads{flex-wrap:wrap}.swatch.band-0{background:#b3d9ca}.swatch.band-1{background:#bdcfe5}
 
 .chart-loading{min-height:180px;display:grid;place-items:center;color:var(--muted);font-size:12px;background:#f8fafb;border-radius:8px}
+
+.ai-fields{border:0;padding:8px 0;margin:8px 0;display:flex;gap:14px;flex-wrap:wrap}.ai-fields legend{font-size:11px;font-weight:650;color:var(--ink)}.ai-fields label{display:flex;align-items:center;gap:5px;font-size:12px}.ai-fields input{width:auto;accent-color:var(--teal)}.ai-estimate{color:var(--teal);font-size:12px;font-weight:650}.ai-chart-controls{display:flex;gap:16px;margin-top:20px}.ai-chart-controls label{font-size:11px;color:var(--muted)}.ai-chart-controls select{margin-left:6px;width:auto}.ai-custom{background:#fbfdfc}

@@ -1,5 +1,6 @@
 """Versioned workload and metric definitions shared by CLI, UI and reports."""
 from copy import deepcopy
+from itertools import product
 
 TESTS = [
     dict(id="arithmetic", group="compute", title="General arithmetic", backend="opencl",
@@ -63,13 +64,25 @@ def config(profile="quick", **overrides):
                  video_modes=["quality", "low-latency"], reference=None, max_temp=90.0,
                  memory_fraction=0.5, integrity_passes=2, timeout=7200,
                  concurrency_media=True, soak_workloads=["compute","memory","video"], ai_model_path=None, ai_moe_model_path=None,
-                 ai_soak_seconds={"quick":30, "standard":300, "extended":1800}[profile])
+                 ai_soak_seconds={"quick":30, "standard":300, "extended":1800}[profile],
+                 ai_dense_options=None, ai_moe_options=None)
     unknown=set(overrides)-set(value)-{'allow_partial'}
     if unknown:raise ValueError('Unknown configuration fields: '+', '.join(sorted(unknown)))
     value.update({k: v for k, v in overrides.items() if v is not None})
     for key in ('ai_model_path', 'ai_moe_model_path'):
         if value[key] is not None and (not isinstance(value[key], str) or not value[key].strip()):
             raise ValueError(f'{key} must be a nonempty local directory path')
+    defaults = {'batch_sizes': [1], 'input_lengths': ['baseline'], 'output_lengths': [64]}
+    allowed = {'batch_sizes': {1, 2, 4, 8}, 'input_lengths': {'baseline', 128, 1024, 2048}, 'output_lengths': {64, 256, 512}}
+    for key in ('ai_dense_options', 'ai_moe_options'):
+        options = value[key] if value[key] is not None else deepcopy(defaults)
+        if not isinstance(options, dict) or set(options) != set(defaults):
+            raise ValueError(f'{key} must include batch_sizes, input_lengths and output_lengths')
+        for field, valid in allowed.items():
+            selected = options[field]
+            if not isinstance(selected, list) or not selected or any(isinstance(v, bool) or not isinstance(v, (int, str)) or v not in valid for v in selected) or len(set(selected)) != len(selected):
+                raise ValueError(f'{key}.{field} contains invalid or duplicate selections')
+        value[key] = deepcopy(options)
     if not isinstance(value['memory_fraction'],(int,float)) or isinstance(value['memory_fraction'],bool) or not (0.05 <= value["memory_fraction"] <= 0.8):
         raise ValueError("memory_fraction must be 0.05–0.8")
     for key, low, high in [("duration", .1, 600), ("warmup", 0, 60), ("repeats", 1, 20),
@@ -108,3 +121,8 @@ def select_tests(names=None):
 
 def metric(name, value, unit, direction="higher", **extra):
     return dict(name=name, value=float(value), unit=unit, direction=direction, **extra)
+
+
+def ai_cases(cfg, test):
+    options = cfg.get('ai_moe_options' if test == 'ai_moe' else 'ai_dense_options') or {'batch_sizes':[1], 'input_lengths':['baseline'], 'output_lengths':[64]}
+    return list(product(options['batch_sizes'], options['input_lengths'], options['output_lengths']))

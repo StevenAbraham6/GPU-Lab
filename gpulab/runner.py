@@ -8,7 +8,7 @@ import threading
 import time
 from pathlib import Path
 from . import __version__
-from .catalog import BY_ID, config, metric, select_tests
+from .catalog import ai_cases, BY_ID, config, metric, select_tests
 from .devices import backend_python, discover, select_gpu
 from .preflight import check
 from .store import ACTIVE, Store
@@ -115,6 +115,22 @@ def demo_result(test,cfg):
               "ai":[("Qwen2.5 7B inference",42,"tokens/s","higher")],
               "ai_moe":[("OLMoE 1B-7B inference",55,"tokens/s","higher")],
               "integrity":[("VRAM mismatches",0,"errors","lower")]}
+    if test in ('ai', 'ai_moe'):
+        cases=[]
+        for batch, input_length, output_length in ai_cases(cfg, test):
+            speed=(42 if test == 'ai' else 55) * batch ** .6
+            settings=dict(fixture='synthetic-v1', profile=cfg['profile'], batch_size=batch,
+                          input_length=input_length, max_output_tokens=output_length)
+            metrics=[metric('completed requests', batch * 10, 'requests', 'context'),
+                     metric('output tokens per second', speed, 'tokens/s'),
+                     metric('per-request output speed', speed/batch, 'tokens/s'),
+                     metric('time to first token', .5, 's', 'lower'),
+                     metric('request completion time', output_length/(speed/batch), 's', 'lower'),
+                     metric('peak PyTorch allocated VRAM', 18000, 'MiB', 'context')]
+            cases.append(dict(name=f'Batch {batch} · input {input_length} · output {output_length}', status='passed',
+                              settings=settings, metrics=metrics, intervals=[],
+                              note='SIMULATED: not a GPU measurement'))
+        return dict(test_id=test,status='passed',started=now(),finished=now(),cases=cases,simulated=True)
     for name,value,unit,direction in examples[test]:
         metrics=[metric("throughput" if direction=="higher" else "latency" if unit in ("µs","ns/access") else "mismatches",value,unit,direction)]
         if direction=="higher":
@@ -195,7 +211,7 @@ def work(store,rid):
             while child.poll() is None:
                 if store.get(rid,samples=False)["cancel"]:aborted="cancelled"
                 elif collector.hot.is_set():aborted="temperature ceiling reached"
-                elif time.monotonic()-started>cfg["timeout"]:aborted="test timeout"
+                elif time.monotonic()-started>(cfg["timeout"] + (cfg.get('ai_soak_seconds', cfg['soak_seconds']) * len(ai_cases(cfg, test)) if test in ('ai', 'ai_moe') else 0)):aborted="test timeout"
                 if aborted:
                     terminate(child);break
                 time.sleep(.25)

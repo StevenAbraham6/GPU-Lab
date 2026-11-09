@@ -43,7 +43,7 @@ def main():
             backend.gpu=spec["gpu"];backend.directory=spec["directory"]
             result["cases"]=getattr(backend,test)(spec["config"])
         statuses={c["status"] for c in result["cases"]}
-        result["status"]="failed_validation" if "failed_validation" in statuses else "error" if "error" in statuses else "passed" if statuses=={"passed"} else "partial" if "passed" in statuses else "unsupported"
+        result["status"]="failed_validation" if "failed_validation" in statuses else "passed" if statuses=={"passed"} else "partial" if "passed" in statuses else "error" if "error" in statuses else "unsupported"
     except Exception as e:
         result.update(status="failed_validation" if isinstance(e,ArithmeticError) else "error",reason=str(e),traceback=traceback.format_exc())
     result["finished"]=now();atomic_json(output,result)
